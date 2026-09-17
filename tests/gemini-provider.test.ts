@@ -7,6 +7,8 @@ import {
   getStoredGeminiConfig,
   saveStoredGeminiConfig,
   clearStoredGeminiConfig,
+  DEFAULT_GEMINI_MODEL,
+  SUPPORTED_GEMINI_MODELS,
 } from '../providers/gemini';
 import { TranslationRequest, ContextPacket, validateTranslationResult } from '../core/contracts';
 import {
@@ -378,22 +380,91 @@ describe('KOMA-005: Gemini Multimodal Translation Provider', () => {
     });
   });
 
+  describe('Model Configuration & Defaults', () => {
+    it('sets default model to gemini-3.5-flash-lite and exports supported models', () => {
+      expect(DEFAULT_GEMINI_MODEL).toBe('gemini-3.5-flash-lite');
+      expect(SUPPORTED_GEMINI_MODELS).toContain('gemini-3.5-flash-lite');
+      expect(SUPPORTED_GEMINI_MODELS).toContain('gemini-3.5-flash');
+      expect(SUPPORTED_GEMINI_MODELS).toContain('gemini-3.8-flash');
+    });
+
+    it('does not hardcode modelId in normalizeGeminiResponse when not provided', () => {
+      const res = normalizeGeminiResponse({
+        rawText: JSON.stringify({ bubbles: [] }),
+        imageId: 'img_default',
+        targetLanguage: 'id',
+      });
+      expect(res.modelId).toBeUndefined();
+    });
+
+    it('preserves caller-supplied modelId in normalizeGeminiResponse', () => {
+      const res = normalizeGeminiResponse({
+        rawText: JSON.stringify({ bubbles: [] }),
+        imageId: 'img_custom',
+        targetLanguage: 'id',
+        modelId: 'my-fine-tuned-model',
+      });
+      expect(res.modelId).toBe('my-fine-tuned-model');
+    });
+
+    it('allows dynamic model override when instantiating provider', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: JSON.stringify({ bubbles: [] }) }],
+              },
+            },
+          ],
+        }),
+      });
+
+      const customProvider = new GeminiTranslationProvider({
+        apiKey: 'test-key',
+        modelName: 'gemini-3.7-flash',
+        fetchFn: mockFetch as unknown as typeof fetch,
+      });
+
+      const res = await customProvider.translatePage({
+        image: { id: 'img_dynamic', pageIndex: 0, base64Data: 'dummy' },
+        targetLanguage: 'id',
+      });
+
+      expect(res.modelId).toBe('gemini-3.7-flash');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/models/gemini-3.7-flash:generateContent'),
+        expect.anything()
+      );
+    });
+  });
+
   describe('BYOK Credential Storage', () => {
+    it('returns default config with gemini-3.5-flash-lite when store is empty', async () => {
+      await clearStoredGeminiConfig();
+      const config = await getStoredGeminiConfig();
+      expect(config.modelName).toBe('gemini-3.5-flash-lite');
+      expect(config.targetLanguage).toBe('id');
+    });
+
     it('saves, retrieves, and clears Gemini configuration locally', async () => {
       await saveStoredGeminiConfig({
         apiKey: 'AIzaSyFakeKeyForTesting12345',
-        modelName: 'gemini-2.0-flash',
+        modelName: 'custom-user-model-v1',
         targetLanguage: 'id',
       });
 
       const config = await getStoredGeminiConfig();
       expect(config.apiKey).toBe('AIzaSyFakeKeyForTesting12345');
-      expect(config.modelName).toBe('gemini-2.0-flash');
+      expect(config.modelName).toBe('custom-user-model-v1');
       expect(config.targetLanguage).toBe('id');
 
       await clearStoredGeminiConfig();
       const cleared = await getStoredGeminiConfig();
       expect(cleared.apiKey).toBe('');
+      expect(cleared.modelName).toBe('gemini-3.5-flash-lite');
     });
   });
 });

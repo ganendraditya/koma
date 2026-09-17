@@ -40,7 +40,7 @@ export function normalizeGeminiResponse(params: NormalizeParams): TranslationRes
     sourceLanguage = 'ja',
     targetLanguage,
     durationMs,
-    modelId = 'gemini-1.5-flash',
+    modelId,
     providerId = 'gemini-multimodal',
   } = params;
 

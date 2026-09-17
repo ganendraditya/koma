@@ -33,4 +33,4 @@ If applicable, add screenshots and Chrome DevTools console logs to help explain 
 - OS: [e.g. macOS, Windows, Linux]
 - Browser: [e.g. Chrome 128, Brave, Edge]
 - Koma Version: [e.g. 0.1.0]
-- AI Provider: [e.g. Gemini 1.5 Flash]
+- AI Provider: [e.g. Gemini 3.8 Flash]

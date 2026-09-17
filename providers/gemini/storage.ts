@@ -2,6 +2,8 @@
  * Secure BYOK (Bring Your Own Key) credential manager for Chrome Extension storage.
  */
 
+import { DEFAULT_GEMINI_MODEL } from './types';
+
 const STORAGE_KEY = 'koma_gemini_config';
 
 export interface StoredGeminiConfig {
@@ -13,7 +15,7 @@ export interface StoredGeminiConfig {
 
 const DEFAULT_CONFIG: StoredGeminiConfig = {
   apiKey: '',
-  modelName: 'gemini-1.5-flash',
+  modelName: DEFAULT_GEMINI_MODEL,
   targetLanguage: 'id',
   rememberKey: true,
 };

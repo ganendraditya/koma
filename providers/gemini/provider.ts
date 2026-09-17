@@ -11,7 +11,7 @@ import {
   ProviderError,
   InvalidProviderResponseError,
 } from '@core/errors';
-import { GeminiRequestPayload, GeminiResponsePayload } from './types';
+import { GeminiRequestPayload, GeminiResponsePayload, DEFAULT_GEMINI_MODEL } from './types';
 import { buildGeminiSystemPrompt, getGeminiResponseSchema } from './prompt';
 import { normalizeGeminiResponse } from './normalizer';
 
@@ -35,7 +35,7 @@ export class GeminiTranslationProvider implements TranslationProvider {
 
   constructor(options: GeminiProviderOptions) {
     this.apiKey = options.apiKey?.trim();
-    this.modelName = options.modelName || 'gemini-1.5-flash';
+    this.modelName = options.modelName || DEFAULT_GEMINI_MODEL;
     this.baseUrl = options.baseUrl || 'https://generativelanguage.googleapis.com/v1beta';
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30000;
     this.fetch = options.fetchFn ?? globalThis.fetch;

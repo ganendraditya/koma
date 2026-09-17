@@ -2,6 +2,15 @@
  * Google Gemini REST API request and response data structures.
  */
 
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
+export const SUPPORTED_GEMINI_MODELS = [
+  'gemini-3.5-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-3.7-flash',
+  'gemini-3.8-flash',
+] as const;
+export type SupportedGeminiModel = (typeof SUPPORTED_GEMINI_MODELS)[number];
+
 export interface GeminiInlineData {
   mimeType: string;
   data: string; // Base64-encoded binary data without prefix

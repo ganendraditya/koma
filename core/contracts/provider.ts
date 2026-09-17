@@ -141,7 +141,7 @@ export interface TranslationResult {
   providerId?: string;
 
   /**
-   * Specific model version used (e.g. 'gemini-1.5-flash').
+   * Specific model version used (e.g. 'gemini-3.8-flash').
    */
   modelId?: string;
 }
@@ -156,7 +156,7 @@ export interface TranslationProvider {
   readonly id: string;
 
   /**
-   * Human-readable display label (e.g. 'Google Gemini 1.5 Flash').
+   * Human-readable display label (e.g. 'Google Gemini Multimodal').
    */
   readonly name: string;
 
