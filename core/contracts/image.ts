@@ -8,9 +8,9 @@ export interface MangaImage {
   id: string;
 
   /**
-   * Source URL of the manga image.
+   * Source URL of the manga image, if loaded via URL.
    */
-  url: string;
+  url?: string;
 
   /**
    * Reading order index (0-based) relative to the current chapter.

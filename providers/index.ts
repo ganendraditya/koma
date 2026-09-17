@@ -1,4 +1,5 @@
 export * from '@core/contracts/provider';
+export * from './gemini';
 
 /**
  * Base configuration options required by client-configured providers.
