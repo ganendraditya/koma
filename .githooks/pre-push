@@ -1,0 +1,32 @@
+#!/bin/sh
+# Koma Pre-Push Hook
+# Prevents pushing code that breaks typecheck, lint, formatting, or unit tests.
+
+echo "🔍 [Koma Git Hook] Running pre-push verification..."
+
+echo "  -> Checking TypeScript types..."
+npm run typecheck || {
+  echo "❌ [Pre-push] TypeScript compilation failed. Push aborted!"
+  exit 1
+}
+
+echo "  -> Checking ESLint rules..."
+npm run lint || {
+  echo "❌ [Pre-push] Lint errors detected. Run 'npm run lint:fix' or fix errors and try again."
+  exit 1
+}
+
+echo "  -> Checking Prettier formatting..."
+npm run format:check || {
+  echo "❌ [Pre-push] Code formatting issues detected. Run 'npm run format' and commit the changes before pushing."
+  exit 1
+}
+
+echo "  -> Running Vitest test suite..."
+npm run test || {
+  echo "❌ [Pre-push] Unit tests failed. Push aborted!"
+  exit 1
+}
+
+echo "✅ [Koma Git Hook] All local checks passed! Proceeding with git push..."
+exit 0
