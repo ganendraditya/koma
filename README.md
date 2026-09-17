@@ -99,9 +99,3 @@ For complete technical specifications, refer to [`docs/ARCHITECTURE.md`](docs/AR
    npm run typecheck && npm run lint && npm run format:check && npm run test && npm run build
    ```
 3. Submit a Pull Request targeting `main`. Pull requests require passing CI checks and at least one peer approval before merging.
-
----
-
-## License
-
-MIT License.
