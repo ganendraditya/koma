@@ -26,9 +26,9 @@ export interface GeminiProviderOptions {
 export class GeminiTranslationProvider implements TranslationProvider {
   public readonly id = 'gemini-multimodal';
   public readonly name = 'Google Gemini Multimodal';
+  public readonly modelName: string;
 
   private readonly apiKey: string;
-  private readonly modelName: string;
   private readonly baseUrl: string;
   private readonly defaultTimeoutMs: number;
   private readonly fetch: typeof fetch;

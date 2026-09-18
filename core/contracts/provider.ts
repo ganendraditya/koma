@@ -62,6 +62,11 @@ export interface TranslationOptions {
    * Custom system instructions or style guide.
    */
   customPrompt?: string;
+
+  /**
+   * If true, bypasses the cache lookup and forces a fresh provider request.
+   */
+  bypassCache?: boolean;
 }
 
 /**
