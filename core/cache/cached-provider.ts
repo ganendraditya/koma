@@ -10,6 +10,7 @@ import { generateCacheKey } from './key';
 export class CachedTranslationProvider implements TranslationProvider {
   public readonly id: string;
   public readonly name: string;
+  public readonly modelName?: string;
   private readonly provider: TranslationProvider;
   private readonly cache: TranslationCache;
   private readonly inFlight = new Map<string, Promise<TranslationResult>>();
@@ -19,6 +20,7 @@ export class CachedTranslationProvider implements TranslationProvider {
     this.cache = cache;
     this.id = provider.id;
     this.name = provider.name;
+    this.modelName = provider.modelName;
   }
 
   capabilities(): ProviderCapabilities {
@@ -26,9 +28,7 @@ export class CachedTranslationProvider implements TranslationProvider {
   }
 
   async translatePage(request: TranslationRequest): Promise<TranslationResult> {
-    const modelId =
-      (request.options as { modelName?: string } | undefined)?.modelName ||
-      (this.provider as { modelName?: string }).modelName;
+    const modelId = request.options?.modelName || this.provider.modelName;
 
     const cacheKey = generateCacheKey({
       image: request.image,
@@ -61,10 +61,6 @@ export class CachedTranslationProvider implements TranslationProvider {
 
     this.inFlight.set(cacheKey, task);
     return task;
-  }
-
-  getCache(): TranslationCache {
-    return this.cache;
   }
 
   async clearCache(): Promise<void> {

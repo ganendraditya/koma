@@ -67,6 +67,11 @@ export interface TranslationOptions {
    * If true, bypasses the cache lookup and forces a fresh provider request.
    */
   bypassCache?: boolean;
+
+  /**
+   * Optional model override for this specific translation request.
+   */
+  modelName?: string;
 }
 
 /**
@@ -164,6 +169,11 @@ export interface TranslationProvider {
    * Human-readable display label (e.g. 'Google Gemini Multimodal').
    */
   readonly name: string;
+
+  /**
+   * Active model identifier used by this provider instance (e.g. 'gemini-3.5-flash-lite'), if applicable.
+   */
+  readonly modelName?: string;
 
   /**
    * Returns the capabilities of this provider instance.
