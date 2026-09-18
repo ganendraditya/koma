@@ -33,31 +33,51 @@ export class CachedTranslationProvider implements TranslationProvider {
     const cacheKey = generateCacheKey({
       image: request.image,
       targetLanguage: request.targetLanguage,
+      sourceLanguage: request.sourceLanguage,
       providerId: this.provider.id,
       modelId,
     });
 
-    if (!request.options?.bypassCache) {
-      const cached = await this.cache.get(cacheKey);
-      if (cached) {
-        return cached;
+    if (request.options?.bypassCache) {
+      const result = await this.provider.translatePage(request);
+      try {
+        await this.cache.set(cacheKey, result);
+      } catch {
+        // Cache persistence failure should not interrupt the translation flow.
       }
-
-      const ongoing = this.inFlight.get(cacheKey);
-      if (ongoing) {
-        return ongoing;
-      }
+      return result;
     }
 
-    const task = (async () => {
+    const ongoing = this.inFlight.get(cacheKey);
+    if (ongoing) {
+      return ongoing;
+    }
+
+    const cached = await this.cache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const ongoingAfterCache = this.inFlight.get(cacheKey);
+    if (ongoingAfterCache) {
+      return ongoingAfterCache;
+    }
+
+    const execute = async (): Promise<TranslationResult> => {
+      const result = await this.provider.translatePage(request);
       try {
-        const result = await this.provider.translatePage(request);
         await this.cache.set(cacheKey, result);
-        return result;
-      } finally {
+      } catch {
+        // Cache persistence failure should not interrupt the translation flow.
+      }
+      return result;
+    };
+
+    const task = execute().finally(() => {
+      if (this.inFlight.get(cacheKey) === task) {
         this.inFlight.delete(cacheKey);
       }
-    })();
+    });
 
     this.inFlight.set(cacheKey, task);
     return task;

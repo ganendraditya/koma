@@ -3,6 +3,7 @@ import { TranslationResult, MangaImage } from '../contracts';
 export interface CacheKeyInput {
   image: Pick<MangaImage, 'id'> & Partial<Pick<MangaImage, 'url' | 'pageIndex'>>;
   targetLanguage: string;
+  sourceLanguage?: string;
   providerId?: string;
   modelId?: string;
 }

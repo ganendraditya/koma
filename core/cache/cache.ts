@@ -90,7 +90,7 @@ export class KomaTranslationCache implements TranslationCache {
     if (this.storageArea) {
       const storageKey = this.getStorageKey(key);
       const rawData = await this.readStorageKey(storageKey);
-      if (rawData) {
+      if (rawData !== undefined) {
         existedInStorage = true;
         await this.removeStorageKey(storageKey);
       }
@@ -161,6 +161,10 @@ export class KomaTranslationCache implements TranslationCache {
     return new Promise((resolve) => {
       try {
         const res = this.storageArea?.get([storageKey], (items: Record<string, unknown>) => {
+          if (typeof chrome !== 'undefined' && chrome.runtime?.lastError) {
+            resolve(undefined);
+            return;
+          }
           resolve(items?.[storageKey]);
         });
         if (res instanceof Promise) {
@@ -176,6 +180,10 @@ export class KomaTranslationCache implements TranslationCache {
     return new Promise((resolve) => {
       try {
         const res = this.storageArea?.set({ [storageKey]: entry }, () => {
+          if (typeof chrome !== 'undefined' && chrome.runtime?.lastError) {
+            resolve();
+            return;
+          }
           resolve();
         });
         if (res instanceof Promise) {
@@ -191,6 +199,10 @@ export class KomaTranslationCache implements TranslationCache {
     return new Promise((resolve) => {
       try {
         const res = this.storageArea?.remove(storageKey, () => {
+          if (typeof chrome !== 'undefined' && chrome.runtime?.lastError) {
+            resolve();
+            return;
+          }
           resolve();
         });
         if (res instanceof Promise) {
@@ -206,6 +218,10 @@ export class KomaTranslationCache implements TranslationCache {
     return new Promise((resolve) => {
       try {
         const res = this.storageArea?.get(null, (items: Record<string, unknown>) => {
+          if (typeof chrome !== 'undefined' && chrome.runtime?.lastError) {
+            resolve(undefined);
+            return;
+          }
           resolve(items);
         });
         if (res instanceof Promise) {

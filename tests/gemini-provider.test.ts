@@ -439,6 +439,42 @@ describe('KOMA-005: Gemini Multimodal Translation Provider', () => {
         expect.anything()
       );
     });
+
+    it('honors per-request modelName override in TranslationOptions', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: JSON.stringify({ bubbles: [] }) }],
+              },
+            },
+          ],
+        }),
+      });
+
+      const provider = new GeminiTranslationProvider({
+        apiKey: 'test-key',
+        modelName: 'gemini-3.5-flash-lite',
+        fetchFn: mockFetch as unknown as typeof fetch,
+      });
+
+      const res = await provider.translatePage({
+        image: { id: 'img_override', pageIndex: 0, base64Data: 'dummy' },
+        targetLanguage: 'id',
+        options: {
+          modelName: 'gemini-3.8-pro',
+        },
+      });
+
+      expect(res.modelId).toBe('gemini-3.8-pro');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/models/gemini-3.8-pro:generateContent'),
+        expect.anything()
+      );
+    });
   });
 
   describe('BYOK Credential Storage', () => {

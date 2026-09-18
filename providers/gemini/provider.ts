@@ -97,7 +97,8 @@ export class GeminiTranslationProvider implements TranslationProvider {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-    const endpoint = `${this.baseUrl}/models/${encodeURIComponent(this.modelName)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
+    const activeModelName = request.options?.modelName || this.modelName;
+    const endpoint = `${this.baseUrl}/models/${encodeURIComponent(activeModelName)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
 
     let response: Response;
     try {
@@ -164,7 +165,7 @@ export class GeminiTranslationProvider implements TranslationProvider {
       sourceLanguage: request.sourceLanguage || 'ja',
       targetLanguage: request.targetLanguage,
       durationMs,
-      modelId: this.modelName,
+      modelId: activeModelName,
       providerId: this.id,
     });
   }

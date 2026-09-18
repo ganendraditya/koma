@@ -87,6 +87,38 @@ describe('KOMA-008 Stage 1: Deterministic Cache Key Generator', () => {
     expect(keyBase).not.toBe(keyDiffProvider);
   });
 
+  it('differentiates cache keys when sourceLanguage is specified', () => {
+    const keyJa = generateCacheKey({
+      image: { id: 'img_001', url: 'https://cdn.example.com/p1.png' },
+      sourceLanguage: 'ja',
+      targetLanguage: 'id',
+    });
+
+    const keyKo = generateCacheKey({
+      image: { id: 'img_001', url: 'https://cdn.example.com/p1.png' },
+      sourceLanguage: 'ko',
+      targetLanguage: 'id',
+    });
+
+    expect(keyJa).not.toBe(keyKo);
+    expect(keyJa).toContain(':ja:');
+    expect(keyKo).toContain(':ko:');
+  });
+
+  it('normalizes relative URLs and strips transient parameters', () => {
+    const key1 = generateCacheKey({
+      image: { id: 'img_rel', url: '/chapters/01/page_02.png?token=secret123&t=99999' },
+      targetLanguage: 'id',
+    });
+
+    const key2 = generateCacheKey({
+      image: { id: 'img_rel', url: '/chapters/01/page_02.png?token=differentToken&t=00000' },
+      targetLanguage: 'id',
+    });
+
+    expect(key1).toBe(key2);
+  });
+
   it('normalizes case for language, provider, and model', () => {
     const keyLower = generateCacheKey({
       image: { id: 'img_1' },
@@ -440,6 +472,38 @@ describe('KOMA-008 Stage 3: Cached Provider Wrapper (End-to-End Cache Hit Verifi
     expect(res1).toEqual(mockResult);
     expect(res2).toEqual(mockResult);
     // Even though cache had not resolved yet, only 1 actual provider call was made
+    expect(rawTranslateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still returns translation result when cache.set throws an error', async () => {
+    const { CachedTranslationProvider } = await import('../core/cache');
+    const { vi } = await import('vitest');
+
+    const rawTranslateMock = vi.fn().mockResolvedValue(mockResult);
+    const mockProvider = {
+      id: 'gemini-multimodal',
+      name: 'Google Gemini Multimodal',
+      capabilities: vi.fn(),
+      translatePage: rawTranslateMock,
+    };
+
+    const failingCache = {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockRejectedValue(new Error('QUOTA_BYTES_EXCEEDED')),
+      has: vi.fn().mockResolvedValue(false),
+      delete: vi.fn().mockResolvedValue(false),
+      clear: vi.fn().mockResolvedValue(undefined),
+      size: vi.fn().mockResolvedValue(0),
+    };
+
+    const cachedProvider = new CachedTranslationProvider(mockProvider, failingCache);
+
+    const result = await cachedProvider.translatePage({
+      image: mockImage,
+      targetLanguage: 'id',
+    });
+
+    expect(result).toEqual(mockResult);
     expect(rawTranslateMock).toHaveBeenCalledTimes(1);
   });
 });
