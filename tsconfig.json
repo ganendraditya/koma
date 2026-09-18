@@ -23,9 +23,13 @@
     /* Path Aliases */
     "baseUrl": ".",
     "paths": {
+      "@core": ["core/index.ts"],
       "@core/*": ["core/*"],
+      "@providers": ["providers/index.ts"],
       "@providers/*": ["providers/*"],
+      "@adapters": ["adapters/index.ts"],
       "@adapters/*": ["adapters/*"],
+      "@shared": ["shared/index.ts"],
       "@shared/*": ["shared/*"]
     },
 

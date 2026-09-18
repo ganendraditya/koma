@@ -4,3 +4,4 @@
 
 export * from '@core/contracts';
 export * from '@core/errors';
+export * from './messages';

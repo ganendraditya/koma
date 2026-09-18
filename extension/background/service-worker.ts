@@ -3,16 +3,26 @@
  * Handles extension lifecycle, background tasks, and inter-process messaging.
  */
 
-console.log('[Koma] Service Worker initialized');
+import { KOMA_VERSION } from '@core';
+import { EXTENSION_MESSAGE_TYPES, PingResponse } from '@shared';
 
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('[Koma] Extension successfully installed');
+console.log(`[Koma] Service Worker initialized (v${KOMA_VERSION})`);
+
+chrome.runtime.onInstalled.addListener((details) => {
+  console.log(`[Koma] Extension installed / updated (reason: ${details.reason})`);
 });
 
 // Listener for messages from popup or content script
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === 'PING') {
-    sendResponse({ status: 'OK', version: '0.1.0' });
+  if (message?.type === EXTENSION_MESSAGE_TYPES.PING) {
+    const response: PingResponse = {
+      status: 'OK',
+      version: KOMA_VERSION,
+      timestamp: Date.now(),
+    };
+    sendResponse(response);
+    return true;
   }
-  return true;
+
+  return false;
 });

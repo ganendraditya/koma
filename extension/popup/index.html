@@ -6,54 +6,81 @@
     <title>Koma — Manga Translator</title>
     <style>
       :root {
-        --bg-color: #0f172a;
-        --card-bg: #1e293b;
+        --bg-color: #090d16;
+        --card-bg: #131b2e;
+        --card-border: #1e293b;
         --text-primary: #f8fafc;
         --text-secondary: #94a3b8;
+        --text-muted: #64748b;
         --accent: #6366f1;
         --accent-hover: #4f46e5;
-        --border: #334155;
+        --success: #10b981;
+        --warning: #f59e0b;
+        --danger: #ef4444;
+        --border: #243048;
+        --input-bg: #0f172a;
+      }
+
+      * {
+        box-sizing: border-box;
       }
 
       body {
         margin: 0;
         padding: 16px;
-        width: 320px;
+        width: 340px;
         font-family:
           -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         background-color: var(--bg-color);
         color: var(--text-primary);
-        box-sizing: border-box;
+        font-size: 13px;
+        line-height: 1.4;
       }
 
       .header {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        margin-bottom: 16px;
+        margin-bottom: 14px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border);
       }
 
-      .title {
-        font-size: 16px;
-        font-weight: 700;
-        letter-spacing: -0.5px;
+      .brand {
         display: flex;
         align-items: center;
         gap: 8px;
       }
 
+      .brand-title {
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: -0.3px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .brand-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: var(--accent);
+      }
+
       .badge {
         font-size: 10px;
-        background-color: var(--accent);
-        color: white;
-        padding: 2px 6px;
+        background-color: rgba(99, 102, 241, 0.15);
+        color: #a5b4fc;
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        padding: 2px 7px;
         border-radius: 9999px;
         font-weight: 600;
       }
 
       .card {
         background-color: var(--card-bg);
-        border: 1px solid var(--border);
+        border: 1px solid var(--card-border);
         border-radius: 8px;
         padding: 12px;
         margin-bottom: 12px;
@@ -62,9 +89,10 @@
       .status-row {
         display: flex;
         justify-content: space-between;
-        font-size: 13px;
+        align-items: center;
+        font-size: 12px;
         color: var(--text-secondary);
-        margin-bottom: 6px;
+        margin-bottom: 7px;
       }
 
       .status-row:last-child {
@@ -73,56 +101,311 @@
 
       .status-value {
         color: var(--text-primary);
-        font-weight: 500;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 1px 7px;
+        border-radius: 9999px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .pill-success {
+        background-color: rgba(16, 185, 129, 0.15);
+        color: #34d399;
+        border: 1px solid rgba(16, 185, 129, 0.3);
+      }
+
+      .pill-warning {
+        background-color: rgba(245, 158, 11, 0.15);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.3);
       }
 
       .btn {
         width: 100%;
-        padding: 10px 14px;
-        font-size: 14px;
+        padding: 9px 14px;
+        font-size: 13px;
         font-weight: 600;
         border-radius: 6px;
         border: none;
         cursor: pointer;
-        background-color: var(--accent);
-        color: white;
-        transition: background-color 0.2s;
+        transition: all 0.15s ease;
         display: flex;
         align-items: center;
         justify-content: center;
         gap: 6px;
       }
 
-      .btn:hover {
+      .btn-primary {
+        background-color: var(--accent);
+        color: white;
+      }
+
+      .btn-primary:hover {
         background-color: var(--accent-hover);
+      }
+
+      .btn-secondary {
+        background-color: #1e293b;
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+      }
+
+      .btn-secondary:hover {
+        background-color: #27354f;
       }
 
       .btn:disabled {
         opacity: 0.5;
         cursor: not-allowed;
       }
+
+      .action-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .diagnostic-box {
+        background-color: #0b1120;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px;
+        margin-bottom: 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        display: none;
+      }
+
+      .diagnostic-box.visible {
+        display: block;
+      }
+
+      .diagnostic-title {
+        font-weight: 700;
+        color: var(--text-secondary);
+        margin-bottom: 6px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .diagnostic-item {
+        margin-bottom: 4px;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .diagnostic-item:last-child {
+        margin-bottom: 0;
+      }
+
+      .settings-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        background: none;
+        border: none;
+        color: var(--text-secondary);
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px 0;
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .settings-toggle:hover {
+        color: var(--text-primary);
+      }
+
+      .settings-panel {
+        display: none;
+        margin-top: 8px;
+        padding-top: 10px;
+        border-top: 1px solid var(--border);
+      }
+
+      .settings-panel.open {
+        display: block;
+      }
+
+      .form-group {
+        margin-bottom: 10px;
+      }
+
+      .form-label {
+        display: block;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin-bottom: 4px;
+      }
+
+      .form-input,
+      .form-select {
+        width: 100%;
+        padding: 7px 10px;
+        background-color: var(--input-bg);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        color: var(--text-primary);
+        font-size: 12px;
+        outline: none;
+      }
+
+      .form-input:focus,
+      .form-select:focus {
+        border-color: var(--accent);
+      }
+
+      .input-with-toggle {
+        display: flex;
+        gap: 6px;
+      }
+
+      .input-with-toggle input {
+        flex: 1;
+      }
+
+      .btn-small {
+        padding: 6px 10px;
+        font-size: 11px;
+        background-color: #1e293b;
+        color: var(--text-secondary);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .btn-small:hover {
+        color: var(--text-primary);
+        background-color: #27354f;
+      }
+
+      .feedback-msg {
+        font-size: 11px;
+        margin-top: 6px;
+        display: none;
+      }
+
+      .feedback-msg.success {
+        color: var(--success);
+        display: block;
+      }
+
+      .feedback-msg.error {
+        color: var(--danger);
+        display: block;
+      }
     </style>
   </head>
   <body>
-    <div class="header">
-      <div class="title">
-        <span>📖 Koma</span>
+    <header class="header">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        <div class="brand-title">Koma</div>
         <span class="badge">v0.1.0</span>
+      </div>
+      <div id="api-indicator" class="pill pill-warning">Key Required</div>
+    </header>
+
+    <div class="card">
+      <div class="status-row">
+        <span>Status</span>
+        <span class="status-value" id="status-text">Checking...</span>
+      </div>
+      <div class="status-row">
+        <span>Target Site</span>
+        <span class="status-value" id="site-text">—</span>
+      </div>
+      <div class="status-row">
+        <span>Manga Images</span>
+        <span class="status-value" id="image-count-text">—</span>
+      </div>
+    </div>
+
+    <div class="action-stack">
+      <button id="btn-translate" class="btn btn-primary">Translate Current Page</button>
+      <button id="btn-diagnostic" class="btn btn-secondary">Run Diagnostics</button>
+    </div>
+
+    <div id="diagnostic-box" class="diagnostic-box">
+      <div class="diagnostic-title">
+        <span>Diagnostic Result</span>
+        <span id="diagnostic-time"></span>
+      </div>
+      <div class="diagnostic-item">
+        <span>Content Script:</span>
+        <span id="diag-cs-status" style="color: var(--text-muted)">Testing...</span>
+      </div>
+      <div class="diagnostic-item">
+        <span>Background Worker:</span>
+        <span id="diag-sw-status" style="color: var(--text-muted)">Testing...</span>
+      </div>
+      <div class="diagnostic-item">
+        <span>Detected Images:</span>
+        <span id="diag-img-count" style="color: var(--text-muted)">—</span>
       </div>
     </div>
 
     <div class="card">
-      <div class="status-row">
-        <span>Status:</span>
-        <span class="status-value" id="status-text">Ready</span>
-      </div>
-      <div class="status-row">
-        <span>Target Site:</span>
-        <span class="status-value" id="site-text">Checking...</span>
+      <button id="btn-toggle-settings" class="settings-toggle" type="button">
+        <span>Provider Settings (BYOK)</span>
+        <span id="settings-chevron">▾</span>
+      </button>
+
+      <div id="settings-panel" class="settings-panel">
+        <div class="form-group">
+          <label class="form-label" for="input-api-key">Gemini API Key</label>
+          <div class="input-with-toggle">
+            <input
+              id="input-api-key"
+              class="form-input"
+              type="password"
+              placeholder="AIzaSy..."
+              autocomplete="off"
+            />
+            <button id="btn-toggle-key-visibility" class="btn-small" type="button">Show</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="select-target-lang">Target Language</label>
+          <select id="select-target-lang" class="form-select">
+            <option value="id">Indonesian (Bahasa Indonesia)</option>
+            <option value="en">English</option>
+            <option value="ja">Japanese (日本語)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="select-model">Model</label>
+          <select id="select-model" class="form-select">
+            <option value="gemini-3.5-flash-lite">
+              gemini-3.5-flash-lite (Fast &amp; Recommended)
+            </option>
+            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+            <option value="gemini-3.8-flash">gemini-3.8-flash (High Quality)</option>
+          </select>
+        </div>
+
+        <button id="btn-save-settings" class="btn btn-secondary" type="button">
+          Save Settings
+        </button>
+        <div id="settings-feedback" class="feedback-msg"></div>
       </div>
     </div>
-
-    <button id="btn-translate" class="btn">Translate Current Page</button>
 
     <script type="module" src="./popup.ts"></script>
   </body>
