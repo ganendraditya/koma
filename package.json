@@ -22,6 +22,7 @@
     "@types/chrome": "^0.0.307",
     "@types/node": "^22.13.9",
     "eslint": "^9.21.0",
+    "happy-dom": "^20.14.5",
     "prettier": "^3.5.3",
     "typescript": "^5.8.2",
     "typescript-eslint": "^8.26.0",
