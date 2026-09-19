@@ -1,4 +1,4 @@
-import { FontScaleOptions } from './types';
+import type { FontScaleOptions } from './types';
 
 export const DEFAULT_MIN_FONT_SIZE = 8;
 export const DEFAULT_MAX_FONT_SIZE = 18;
@@ -55,6 +55,11 @@ export function fitTextToBubble(
   const step = options?.step ?? 1;
 
   const text = textElement.textContent || '';
+  if (!text.trim()) {
+    textElement.style.fontSize = `${minFontSize}px`;
+    return minFontSize;
+  }
+
   const clientWidth = container.clientWidth;
   const clientHeight = container.clientHeight;
 
@@ -75,9 +80,22 @@ export function fitTextToBubble(
     return currentFontSize;
   }
 
-  // Fallback: estimate based on style width/height or bounding box
-  const rectWidth = parseFloat(container.style.width) || container.offsetWidth || 100;
-  const rectHeight = parseFloat(container.style.height) || container.offsetHeight || 60;
+  const bounds = container.getBoundingClientRect();
+  const pixelWidth = container.style.width.trim().endsWith('px')
+    ? Number.parseFloat(container.style.width)
+    : 0;
+  const pixelHeight = container.style.height.trim().endsWith('px')
+    ? Number.parseFloat(container.style.height)
+    : 0;
+  const rectWidth = bounds.width || container.offsetWidth || pixelWidth;
+  const rectHeight = bounds.height || container.offsetHeight || pixelHeight;
+
+  // Percentage boxes need a rendered parent size before they can be converted to pixels.
+  if (rectWidth <= 0 || rectHeight <= 0) {
+    textElement.style.fontSize = `${maxFontSize}px`;
+    return maxFontSize;
+  }
+
   const fitted = estimateFittedFontSize(text, rectWidth, rectHeight, options);
 
   textElement.style.fontSize = `${fitted}px`;

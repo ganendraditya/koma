@@ -1,7 +1,25 @@
-import { boxToPercentages, TranslationResult, Bubble } from '../contracts';
+import { boxToPercentages } from '../contracts';
+import type { Bubble, TranslationResult } from '../contracts';
 import { KomaError } from '../errors';
 import { fitTextToBubble } from './font-scaler';
-import { RenderOverlayOptions, RenderedBubbleOverlay, RenderOverlayResult } from './types';
+import type { RenderOverlayOptions, RenderedBubbleOverlay, RenderOverlayResult } from './types';
+
+const IMAGE_MARGIN_PROPERTIES = [
+  'margin-top',
+  'margin-right',
+  'margin-bottom',
+  'margin-left',
+] as const;
+
+interface InlineStyleValue {
+  value: string;
+  priority: string;
+}
+
+interface OriginalImageState {
+  imageId: string | null;
+  margins: Map<string, InlineStyleValue>;
+}
 
 /**
  * Applies CSS properties with !important priority to protect against aggressive website CSS resets.
@@ -36,6 +54,8 @@ export class DOMOverlayRenderer {
   };
 
   private readonly renderedOverlays = new Map<string, RenderOverlayResult>();
+  private readonly resizeObservers = new Map<string, ResizeObserver>();
+  private readonly originalImageStates = new WeakMap<HTMLImageElement, OriginalImageState>();
 
   constructor(private readonly globalOptions?: RenderOverlayOptions) {}
 
@@ -67,6 +87,8 @@ export class DOMOverlayRenderer {
       );
     }
 
+    this.disconnectResizeObserver(result.imageId);
+
     // 1. Establish or reuse the relative wrapper around the image
     const wrapper = this.ensureImageWrapper(imageElement, result.imageId);
 
@@ -91,6 +113,7 @@ export class DOMOverlayRenderer {
     };
 
     this.renderedOverlays.set(result.imageId, renderResult);
+    this.observeImageResize(imageElement, renderResult, mergedOptions);
     return renderResult;
   }
 
@@ -166,14 +189,22 @@ export class DOMOverlayRenderer {
 
     applyImportantStyles(wrapper, {
       position: 'relative',
-      display: 'inline-block',
+      display: this.wrapperDisplayFor(image),
       'line-height': '0',
       'max-width': '100%',
       padding: '0',
-      margin: '0',
+      ...this.imageMargins(image),
       border: 'none',
       outline: 'none',
-      'vertical-align': 'top',
+      'vertical-align': this.computedStyleFor(image)?.verticalAlign || 'baseline',
+    });
+
+    this.rememberImageState(image);
+    applyImportantStyles(image, {
+      'margin-top': '0',
+      'margin-right': '0',
+      'margin-bottom': '0',
+      'margin-left': '0',
     });
 
     if (image.parentNode) {
@@ -253,6 +284,11 @@ export class DOMOverlayRenderer {
       bubbleElement.setAttribute('data-koma-source-text', bubble.sourceText);
       if (options.showSourceOnHover) {
         bubbleElement.title = `Original: ${bubble.sourceText}`;
+        bubbleElement.tabIndex = 0;
+        bubbleElement.setAttribute(
+          'aria-label',
+          `${bubble.translatedText}. Original: ${bubble.sourceText}`
+        );
       }
     }
 
@@ -329,6 +365,7 @@ export class DOMOverlayRenderer {
     const image = wrapper.querySelector<HTMLImageElement>(':scope > img');
     if (image && wrapper.parentNode) {
       wrapper.parentNode.insertBefore(image, wrapper);
+      this.restoreImageState(image);
     }
     if (wrapper.parentNode) {
       wrapper.parentNode.removeChild(wrapper);
@@ -339,6 +376,7 @@ export class DOMOverlayRenderer {
    * Removes overlay layers and unwraps the host image for a specific result.
    */
   private cleanupOverlayResult(result: RenderOverlayResult): void {
+    this.disconnectResizeObserver(result.imageId);
     if (result.overlayLayer.parentNode) {
       result.overlayLayer.parentNode.removeChild(result.overlayLayer);
     }
@@ -362,5 +400,91 @@ export class DOMOverlayRenderer {
     }
 
     return null;
+  }
+
+  private observeImageResize(
+    image: HTMLImageElement,
+    result: RenderOverlayResult,
+    options: Required<RenderOverlayOptions>
+  ): void {
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      for (const bubble of result.bubbles) {
+        bubble.fontSize = fitTextToBubble(bubble.textElement, bubble.element, {
+          minFontSize: options.minFontSize,
+          maxFontSize: options.maxFontSize,
+        });
+      }
+    });
+
+    observer.observe(image);
+    this.resizeObservers.set(result.imageId, observer);
+  }
+
+  private disconnectResizeObserver(imageId: string): void {
+    this.resizeObservers.get(imageId)?.disconnect();
+    this.resizeObservers.delete(imageId);
+  }
+
+  private computedStyleFor(image: HTMLImageElement): CSSStyleDeclaration | undefined {
+    return image.ownerDocument.defaultView?.getComputedStyle(image);
+  }
+
+  private wrapperDisplayFor(image: HTMLImageElement): string {
+    const display = this.computedStyleFor(image)?.display;
+    return !display || display === 'inline' ? 'inline-block' : display;
+  }
+
+  private imageMargins(image: HTMLImageElement): Record<string, string> {
+    const style = this.computedStyleFor(image);
+    return {
+      'margin-top': style?.marginTop || '0',
+      'margin-right': style?.marginRight || '0',
+      'margin-bottom': style?.marginBottom || '0',
+      'margin-left': style?.marginLeft || '0',
+    };
+  }
+
+  private rememberImageState(image: HTMLImageElement): void {
+    if (this.originalImageStates.has(image)) {
+      return;
+    }
+
+    const margins = new Map<string, InlineStyleValue>();
+    for (const property of IMAGE_MARGIN_PROPERTIES) {
+      margins.set(property, {
+        value: image.style.getPropertyValue(property),
+        priority: image.style.getPropertyPriority(property),
+      });
+    }
+    this.originalImageStates.set(image, {
+      imageId: image.getAttribute('data-koma-image-id'),
+      margins,
+    });
+  }
+
+  private restoreImageState(image: HTMLImageElement): void {
+    const original = this.originalImageStates.get(image);
+    if (!original) {
+      return;
+    }
+
+    for (const [property, style] of original.margins) {
+      if (style.value) {
+        image.style.setProperty(property, style.value, style.priority);
+      } else {
+        image.style.removeProperty(property);
+      }
+    }
+
+    if (original.imageId === null) {
+      image.removeAttribute('data-koma-image-id');
+    } else {
+      image.setAttribute('data-koma-image-id', original.imageId);
+    }
+    this.originalImageStates.delete(image);
   }
 }

@@ -1,4 +1,4 @@
-import { Bubble, TranslationResult } from '../contracts';
+import type { Bubble, TranslationResult } from '../contracts';
 
 /**
  * Options configuring the appearance and behavior of rendered DOM overlays.

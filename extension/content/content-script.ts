@@ -10,6 +10,7 @@ import {
   type CheckPageStatusResponse,
 } from '@shared';
 import { DOMOverlayRenderer } from '@core/renderer';
+import { resolveTargetImage } from './target-image';
 
 console.log('[Koma] Content script loaded on:', window.location.href);
 
@@ -82,7 +83,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message.type === EXTENSION_MESSAGE_TYPES.RENDER_TRANSLATION_OVERLAY) {
     try {
-      const renderResult = overlayRenderer.render(message.result);
+      const targetImage = resolveTargetImage(message.targetSelector);
+      const renderResult = overlayRenderer.render(message.result, targetImage);
       sendResponse({
         success: true,
         imageId: renderResult.imageId,

@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { DOMOverlayRenderer, estimateFittedFontSize, fitTextToBubble } from '../core/renderer';
 import { TranslationResult } from '../core/contracts';
 import { KomaError } from '../core/errors';
+import { resolveTargetImage } from '../extension/content/target-image';
 
 describe('KOMA-006: DOM Overlay Renderer', () => {
   let renderer: DOMOverlayRenderer;
@@ -71,18 +72,17 @@ describe('KOMA-006: DOM Overlay Renderer', () => {
     image1 = document.createElement('img');
     image1.id = 'page-1';
     image1.src = 'https://example.com/manga/page1.jpg';
-    image1.setAttribute('data-koma-image-id', 'img_page_01');
     container.appendChild(image1);
 
     image2 = document.createElement('img');
     image2.id = 'page-2';
     image2.src = 'https://example.com/manga/page2.jpg';
-    image2.setAttribute('data-koma-image-id', 'img_page_02');
     container.appendChild(image2);
   });
 
   afterEach(() => {
     renderer.removeAllOverlays();
+    vi.unstubAllGlobals();
     if (container.parentNode) {
       container.parentNode.removeChild(container);
     }
@@ -106,6 +106,15 @@ describe('KOMA-006: DOM Overlay Renderer', () => {
       };
 
       expect(() => renderer.render(invalidResult)).toThrow(KomaError);
+    });
+
+    it('resolves an unmodified page image from the message target selector', () => {
+      const target = resolveTargetImage('#page-1');
+
+      expect(target).toBe(image1);
+      expect(target.hasAttribute('data-koma-image-id')).toBe(false);
+      expect(() => resolveTargetImage('#reader-container')).toThrow(KomaError);
+      expect(() => resolveTargetImage('[')).toThrow(KomaError);
     });
 
     it('2. converts normalized bounding boxes [0, 1000] correctly to percentage coordinates', () => {
@@ -161,6 +170,25 @@ describe('KOMA-006: DOM Overlay Renderer', () => {
       expect(layer.style.height).toBe('100%');
     });
 
+    it('preserves the image display and margins while wrapped and restores its inline styles', () => {
+      image1.style.display = 'block';
+      image1.style.margin = '12px auto 8px';
+
+      const outcome = renderer.render(mockResult1, image1);
+
+      expect(outcome.wrapperElement.style.display).toBe('block');
+      expect(outcome.wrapperElement.style.marginTop).toBe('12px');
+      expect(outcome.wrapperElement.style.marginRight).toBe('auto');
+      expect(outcome.wrapperElement.style.marginBottom).toBe('8px');
+      expect(outcome.wrapperElement.style.marginLeft).toBe('auto');
+      expect(image1.style.marginTop).toBe('0px');
+
+      renderer.removeOverlay(mockResult1.imageId);
+
+      expect(image1.style.margin).toBe('12px auto 8px');
+      expect(image1.hasAttribute('data-koma-image-id')).toBe(false);
+    });
+
     it('5 & 6. remains aligned under zoom and resize through percentage coordinates', () => {
       const outcome = renderer.render(mockResult1, image1);
       const bubbleEl = outcome.bubbles[0].element;
@@ -211,9 +239,64 @@ describe('KOMA-006: DOM Overlay Renderer', () => {
       testBox.appendChild(testText);
 
       const fitted = fitTextToBubble(testText, testBox, { minFontSize: 8, maxFontSize: 18 });
-      expect(fitted).toBeLessThanOrEqual(18);
+      expect(fitted).toBeLessThan(18);
       expect(fitted).toBeGreaterThanOrEqual(8);
       expect(testText.style.fontSize).toBe(`${fitted}px`);
+    });
+
+    it('defers percentage-based font estimation until layout dimensions are measurable', () => {
+      const testBox = document.createElement('div');
+      testBox.style.width = '40%';
+      testBox.style.height = '20%';
+      const testText = document.createElement('div');
+      testText.textContent = 'A long translation that must not treat 40% as 40 pixels.';
+      testBox.appendChild(testText);
+
+      const fitted = fitTextToBubble(testText, testBox, { minFontSize: 8, maxFontSize: 18 });
+
+      expect(fitted).toBe(18);
+      expect(testText.style.fontSize).toBe('18px');
+    });
+
+    it('refits text when the target image resizes and disconnects the observer on removal', () => {
+      let resizeCallback: ResizeObserverCallback = () => {};
+      const observe = vi.fn();
+      const disconnect = vi.fn();
+
+      class MockResizeObserver {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallback = callback;
+        }
+
+        observe = observe;
+        unobserve = vi.fn();
+        disconnect = disconnect;
+      }
+
+      vi.stubGlobal('ResizeObserver', MockResizeObserver);
+      const outcome = renderer.render(mockResult1, image1);
+      const firstBubble = outcome.bubbles[0];
+
+      Object.defineProperties(firstBubble.element, {
+        clientWidth: { configurable: true, value: 100 },
+        clientHeight: { configurable: true, value: 50 },
+      });
+      Object.defineProperties(firstBubble.textElement, {
+        scrollHeight: {
+          configurable: true,
+          get: () => (Number.parseFloat(firstBubble.textElement.style.fontSize) > 8 ? 100 : 40),
+        },
+        scrollWidth: { configurable: true, value: 80 },
+      });
+
+      resizeCallback([], {} as ResizeObserver);
+
+      expect(observe).toHaveBeenCalledWith(image1);
+      expect(firstBubble.fontSize).toBe(8);
+      expect(firstBubble.textElement.style.fontSize).toBe('8px');
+
+      renderer.removeOverlay(mockResult1.imageId);
+      expect(disconnect).toHaveBeenCalledOnce();
     });
 
     it('9. does not intentionally modify the original manga image', () => {
@@ -305,6 +388,8 @@ describe('KOMA-006: DOM Overlay Renderer', () => {
 
       expect(bubbleWithSource.getAttribute('data-koma-source-text')).toBe('何をしているんだ？');
       expect(bubbleWithSource.title).toBe('Original: 何をしているんだ？');
+      expect(bubbleWithSource.tabIndex).toBe(0);
+      expect(bubbleWithSource.getAttribute('aria-label')).toContain('Original: 何をしているんだ？');
     });
   });
 });

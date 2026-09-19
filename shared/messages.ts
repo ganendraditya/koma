@@ -1,4 +1,4 @@
-import { TranslationResult } from './index';
+import type { TranslationResult } from '@core/contracts';
 
 /**
  * Standard message types and payloads for Chrome extension inter-process communication.
@@ -62,6 +62,7 @@ export interface DiagnosticReport {
 export interface RenderTranslationOverlayRequest {
   type: typeof EXTENSION_MESSAGE_TYPES.RENDER_TRANSLATION_OVERLAY;
   result: TranslationResult;
+  targetSelector: string;
 }
 
 export interface ClearAllOverlaysRequest {
