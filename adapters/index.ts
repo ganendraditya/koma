@@ -18,4 +18,9 @@ export interface SiteAdapter {
    * Scrapes or observes manga images from the reader DOM.
    */
   detectMangaImages(): MangaImage[];
+
+  /** Emits an initial snapshot and changed snapshots; returns a cleanup function. */
+  observeMangaImages(onChange: (images: MangaImage[]) => void): () => void;
 }
+
+export { MangaDexAdapter } from './mangadex';
