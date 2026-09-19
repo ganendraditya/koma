@@ -7,6 +7,7 @@ export const EXTENSION_MESSAGE_TYPES = {
   CHECK_PAGE_STATUS: 'CHECK_PAGE_STATUS',
   RUN_DIAGNOSTIC: 'RUN_DIAGNOSTIC',
   TRANSLATE_ACTIVE_PAGE: 'TRANSLATE_ACTIVE_PAGE',
+  TRANSLATION_PROGRESS: 'TRANSLATION_PROGRESS',
 } as const;
 
 export type ExtensionMessageType =
@@ -55,4 +56,15 @@ export interface DiagnosticReport {
   };
 }
 
-export type ExtensionRequest = PingRequest | CheckPageStatusRequest | RunDiagnosticRequest;
+export interface TranslateActivePageRequest {
+  type: typeof EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE;
+}
+
+export interface TranslationProgressEvent {
+  type: typeof EXTENSION_MESSAGE_TYPES.TRANSLATION_PROGRESS;
+  imageId: string;
+  status: 'idle' | 'translating' | 'completed' | 'failed';
+  error?: string;
+}
+
+export type ExtensionRequest = PingRequest | CheckPageStatusRequest | RunDiagnosticRequest | TranslateActivePageRequest;
