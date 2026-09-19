@@ -8,6 +8,12 @@ export interface ContextManagerOptions {
   maxDialogueEntries?: number;
 
   /**
+   * Maximum glossary entries preserved in memory.
+   * Default: 50.
+   */
+  maxGlossaryEntries?: number;
+
+  /**
    * Initial series or chapter metadata.
    */
   seriesTitle?: string;

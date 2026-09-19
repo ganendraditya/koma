@@ -10,26 +10,38 @@ import {
   type CheckPageStatusResponse,
   type ResetContextResponse,
 } from '@shared';
+import { ContextManager, type IContextManager } from '@core/context';
 
-console.log('[Koma] Content script loaded on:', window.location.href);
+if (typeof window !== 'undefined') {
+  console.log('[Koma] Content script loaded on:', window.location?.href);
+}
 
-// Listen for messages from popup or background service worker
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+// Session context owner for active tab / content script session
+export const sessionContextManager: IContextManager = new ContextManager();
+
+export function handleContentScriptMessage(
+  message: unknown,
+  _sender?: chrome.runtime.MessageSender,
+  sendResponse?: (response: unknown) => void,
+  contextManager: IContextManager = sessionContextManager
+): boolean {
   if (!message || typeof message !== 'object') {
     return false;
   }
 
-  if (message.type === EXTENSION_MESSAGE_TYPES.CHECK_PAGE_STATUS) {
+  const req = message as { type?: string };
+
+  if (req.type === EXTENSION_MESSAGE_TYPES.CHECK_PAGE_STATUS) {
     const response: CheckPageStatusResponse = {
       active: true,
-      url: window.location.href,
-      imageCount: document.querySelectorAll('img').length,
+      url: typeof window !== 'undefined' ? window.location?.href || '' : '',
+      imageCount: typeof document !== 'undefined' ? document.querySelectorAll('img').length : 0,
     };
-    sendResponse(response);
+    sendResponse?.(response);
     return true;
   }
 
-  if (message.type === EXTENSION_MESSAGE_TYPES.RUN_DIAGNOSTIC) {
+  if (req.type === EXTENSION_MESSAGE_TYPES.RUN_DIAGNOSTIC) {
     const startTime = Date.now();
 
     // Ping background service worker to test content-to-worker communication
@@ -61,16 +73,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const report: DiagnosticReport = {
           success: true,
           timestamp: Date.now(),
-          url: window.location.href,
+          url: typeof window !== 'undefined' ? window.location?.href || '' : '',
           contentScript: {
             active: true,
-            detectedImages: document.querySelectorAll('img').length,
-            readyState: document.readyState,
+            detectedImages:
+              typeof document !== 'undefined' ? document.querySelectorAll('img').length : 0,
+            readyState: typeof document !== 'undefined' ? document.readyState : 'complete',
           },
           serviceWorker: serviceWorkerStatus,
         };
 
-        sendResponse(report);
+        sendResponse?.(report);
       }
     );
 
@@ -78,11 +91,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === EXTENSION_MESSAGE_TYPES.RESET_CONTEXT) {
+  if (req.type === EXTENSION_MESSAGE_TYPES.RESET_CONTEXT) {
+    contextManager.reset();
     const response: ResetContextResponse = { success: true, timestamp: Date.now() };
-    sendResponse(response);
+    sendResponse?.(response);
     return false;
   }
 
   return false;
-});
+}
+
+// Listen for messages from popup or background service worker
+if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    return handleContentScriptMessage(message, sender, sendResponse, sessionContextManager);
+  });
+}

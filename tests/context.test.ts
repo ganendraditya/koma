@@ -462,6 +462,24 @@ describe('KOMA-009: Minimal Context-Aware Translation', () => {
       expect(contextManager.getPacket().recentDialogue).toEqual([]);
       expect(contextManager.getPacket().glossary).toEqual([]);
     });
+
+    it('resets context via ContextAwareProvider resetContext() method', () => {
+      contextManager.recordTranslation({
+        bubbles: [
+          {
+            id: 'b1',
+            sourceText: 'Teks',
+            translatedText: 'Terjemahan',
+            box: { ymin: 0, xmin: 0, ymax: 10, xmax: 10 },
+          },
+        ],
+      });
+      expect(contextManager.getDialogueCount()).toBe(1);
+
+      contextAwareProvider.resetContext();
+      expect(contextManager.getDialogueCount()).toBe(0);
+      expect(contextManager.getGlossary()).toHaveLength(0);
+    });
   });
 
   describe('AC 11: Zero-Context Fallback', () => {
@@ -519,6 +537,89 @@ describe('KOMA-009: Minimal Context-Aware Translation', () => {
       contextManager.recordTranslation({ bubbles: [null, undefined, { translatedText: '' }] });
 
       expect(contextManager.getDialogueCount()).toBe(0);
+    });
+
+    it('handles valid bubble with malformed non-string glossary update without throwing or inconsistent state', async () => {
+      mockProvider.mockBubbles = [
+        {
+          id: 'b1',
+          sourceText: '悪魔の実',
+          translatedText: 'Buah Iblis',
+          box: { ymin: 10, xmin: 10, ymax: 50, xmax: 50 },
+          bubbleType: 'speech',
+        },
+      ];
+      // Malformed glossary update: non-string original and translation types
+      mockProvider.mockContextDelta = {
+        glossaryUpdates: [
+          { original: 123 as unknown as string, translation: 'Number' },
+          { original: 'ValidTerm', translation: 456 as unknown as string },
+          { original: null as unknown as string, translation: 'Null' },
+          { original: '覇気', translation: 'Haki' },
+        ],
+      };
+
+      const result = await contextAwareProvider.translatePage({
+        image: createDummyImage('img_malformed_glossary', 1),
+        targetLanguage: 'id',
+      });
+
+      expect(result).toBeDefined();
+      expect(result.bubbles).toHaveLength(1);
+
+      // Valid dialogue was committed
+      expect(contextManager.getDialogueCount()).toBe(1);
+      expect(contextManager.getDialogueHistory()[0].translatedText).toBe('Buah Iblis');
+
+      // Only valid glossary update ('覇気' -> 'Haki') was accepted; malformed ones safely skipped
+      const glossary = contextManager.getGlossary();
+      expect(glossary).toHaveLength(1);
+      expect(glossary[0].original).toBe('覇気');
+      expect(glossary[0].translation).toBe('Haki');
+    });
+
+    it('guards setMaxDialogueEntries and constructor against NaN', () => {
+      const nanManager = new ContextManager({ maxDialogueEntries: NaN });
+      expect(nanManager.getMaxDialogueEntries()).toBe(15);
+
+      nanManager.setMaxDialogueEntries(NaN);
+      expect(nanManager.getMaxDialogueEntries()).toBe(15);
+
+      nanManager.setMaxDialogueEntries(-5);
+      expect(nanManager.getMaxDialogueEntries()).toBe(1);
+    });
+
+    it('bounds dynamic glossary growth and evicts oldest soft entries when limit exceeded', () => {
+      const boundedManager = new ContextManager({ maxGlossaryEntries: 2 });
+      boundedManager.addGlossaryEntry({ original: 'Pinned', translation: 'Dipin', isHard: true });
+
+      boundedManager.recordTranslation({
+        bubbles: [{ id: 'b1', translatedText: 'Text 1' }],
+        contextDelta: {
+          glossaryUpdates: [
+            { original: 'Soft1', translation: 'Lembut1' },
+            { original: 'Soft2', translation: 'Lembut2' },
+          ],
+        },
+      });
+
+      // Pinned (hard) is preserved, Soft1 was evicted to respect bound, Soft2 remains
+      const terms = boundedManager.getGlossary().map((g) => g.original);
+      expect(terms).toContain('Pinned');
+      expect(terms).toContain('Soft2');
+      expect(terms).not.toContain('Soft1');
+    });
+
+    it('safely ignores non-string inputs in addGlossaryEntry and removeGlossaryEntry', () => {
+      contextManager.addGlossaryEntry(null as unknown as GlossaryEntry);
+      contextManager.addGlossaryEntry({
+        original: 123 as unknown as string,
+        translation: 'Test',
+      });
+      expect(contextManager.getGlossary()).toHaveLength(0);
+
+      expect(contextManager.removeGlossaryEntry(null as unknown as string)).toBe(false);
+      expect(contextManager.removeGlossaryEntry(undefined as unknown as string)).toBe(false);
     });
   });
 });

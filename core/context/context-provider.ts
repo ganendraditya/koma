@@ -40,6 +40,10 @@ export class ContextAwareProvider implements TranslationProvider {
     return result;
   }
 
+  resetContext(): void {
+    this.contextManager.reset();
+  }
+
   getContextManager(): IContextManager {
     return this.contextManager;
   }

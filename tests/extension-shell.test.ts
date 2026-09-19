@@ -13,6 +13,10 @@ import {
   clearStoredGeminiConfig,
 } from '../providers/gemini/storage';
 import { KOMA_VERSION } from '../core';
+import {
+  handleContentScriptMessage,
+  sessionContextManager,
+} from '../extension/content/content-script';
 
 describe('KOMA-002: Chrome Manifest V3 Extension Shell', () => {
   describe('Manifest V3 Configuration & Integrity', () => {
@@ -175,19 +179,43 @@ describe('KOMA-002: Chrome Manifest V3 Extension Shell', () => {
       expect(report.serviceWorker.error).toContain('Could not establish connection');
     });
 
-    it('processes RESET_CONTEXT request in content script messaging handler', () => {
-      const handleMessage = (msg: { type: string }) => {
-        if (msg.type === EXTENSION_MESSAGE_TYPES.RESET_CONTEXT) {
-          return { success: true, timestamp: Date.now() };
-        }
-        return false;
-      };
+    it('processes RESET_CONTEXT request in content script messaging handler and clears session context', () => {
+      // Seed session context state
+      sessionContextManager.recordTranslation({
+        bubbles: [
+          {
+            id: 'b1',
+            sourceText: 'お前は誰だ？',
+            translatedText: 'Siapa kau?',
+            box: { ymin: 10, xmin: 10, ymax: 50, xmax: 50 },
+          },
+        ],
+      });
+      sessionContextManager.addGlossaryEntry({
+        original: '海賊王',
+        translation: 'Raja Bajak Laut',
+      });
 
-      const result = handleMessage({ type: EXTENSION_MESSAGE_TYPES.RESET_CONTEXT });
-      expect(result).toEqual({
+      expect(sessionContextManager.getDialogueCount()).toBe(1);
+      expect(sessionContextManager.getGlossary()).toHaveLength(1);
+
+      const sendResponse = vi.fn();
+      const keptChannelOpen = handleContentScriptMessage(
+        { type: EXTENSION_MESSAGE_TYPES.RESET_CONTEXT },
+        undefined,
+        sendResponse,
+        sessionContextManager
+      );
+
+      expect(keptChannelOpen).toBe(false);
+      expect(sendResponse).toHaveBeenCalledWith({
         success: true,
         timestamp: expect.any(Number),
       });
+
+      // Context state must be completely cleared
+      expect(sessionContextManager.getDialogueCount()).toBe(0);
+      expect(sessionContextManager.getGlossary()).toHaveLength(0);
     });
   });
 

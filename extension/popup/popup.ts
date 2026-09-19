@@ -44,6 +44,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   const feedbackEl = document.getElementById('settings-feedback') as HTMLElement;
 
   let activeTabId: number | undefined;
+  let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function showFeedback(text: string, type: 'success' | 'error', duration = 2500): void {
+    if (!feedbackEl) {
+      return;
+    }
+    if (feedbackTimer) {
+      clearTimeout(feedbackTimer);
+      feedbackTimer = undefined;
+    }
+    feedbackEl.className = `feedback-msg ${type}`;
+    feedbackEl.textContent = text;
+    if (duration > 0) {
+      feedbackTimer = setTimeout(() => {
+        feedbackEl.className = 'feedback-msg';
+        feedbackEl.textContent = '';
+        feedbackTimer = undefined;
+      }, duration);
+    }
+  }
 
   function updateKeyIndicator(hasKey: boolean) {
     if (!apiIndicatorEl) return;
@@ -165,10 +185,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!config.apiKey?.trim()) {
       settingsPanel.classList.add('open');
       settingsChevron.textContent = '▴';
-      if (feedbackEl) {
-        feedbackEl.className = 'feedback-msg error';
-        feedbackEl.textContent = 'Please configure your Gemini API Key below.';
-      }
+      showFeedback('Please configure your Gemini API Key below.', 'error');
       return;
     }
 
@@ -218,30 +235,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
 
       updateKeyIndicator(Boolean(apiKey));
-
-      if (feedbackEl) {
-        feedbackEl.className = 'feedback-msg success';
-        feedbackEl.textContent = 'Settings saved successfully!';
-        setTimeout(() => {
-          feedbackEl.className = 'feedback-msg';
-          feedbackEl.textContent = '';
-        }, 2500);
-      }
+      showFeedback('Settings saved successfully!', 'success');
     } catch (error) {
-      if (feedbackEl) {
-        feedbackEl.className = 'feedback-msg error';
-        feedbackEl.textContent = `Save failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-      }
+      showFeedback(
+        `Save failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'error'
+      );
     }
   });
 
   // 8. Reset Context Action
   resetContextBtn?.addEventListener('click', () => {
     if (!activeTabId) {
-      if (feedbackEl) {
-        feedbackEl.className = 'feedback-msg error';
-        feedbackEl.textContent = 'No active page to reset context.';
-      }
+      showFeedback('No active page to reset context.', 'error');
       return;
     }
 
@@ -250,19 +256,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       { type: EXTENSION_MESSAGE_TYPES.RESET_CONTEXT },
       (response: ResetContextResponse | undefined) => {
         if (chrome.runtime.lastError || !response?.success) {
-          if (feedbackEl) {
-            feedbackEl.className = 'feedback-msg error';
-            feedbackEl.textContent = 'Failed to reset page context.';
-          }
+          showFeedback('Failed to reset page context.', 'error');
         } else {
-          if (feedbackEl) {
-            feedbackEl.className = 'feedback-msg success';
-            feedbackEl.textContent = 'Context memory reset successfully.';
-            setTimeout(() => {
-              feedbackEl.className = 'feedback-msg';
-              feedbackEl.textContent = '';
-            }, 2500);
-          }
+          showFeedback('Context memory reset successfully.', 'success');
         }
       }
     );

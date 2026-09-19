@@ -175,6 +175,16 @@
         margin-bottom: 12px;
       }
 
+      .settings-btn-row {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .settings-btn-row .btn {
+        flex: 1;
+      }
+
       .diagnostic-box {
         background-color: #0b1120;
         border: 1px solid var(--border);
@@ -400,11 +410,11 @@
           </select>
         </div>
 
-        <div style="display: flex; gap: 8px; margin-top: 10px">
-          <button id="btn-save-settings" class="btn btn-secondary" type="button" style="flex: 1">
+        <div class="settings-btn-row">
+          <button id="btn-save-settings" class="btn btn-secondary" type="button">
             Save Settings
           </button>
-          <button id="btn-reset-context" class="btn btn-secondary" type="button" style="flex: 1">
+          <button id="btn-reset-context" class="btn btn-secondary" type="button">
             Reset Context
           </button>
         </div>
