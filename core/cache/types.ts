@@ -1,4 +1,4 @@
-import { TranslationResult, MangaImage } from '../contracts';
+import { TranslationResult, MangaImage, ContextPacket } from '../contracts';
 
 export interface CacheKeyInput {
   image: Pick<MangaImage, 'id'> & Partial<Pick<MangaImage, 'url' | 'pageIndex'>>;
@@ -6,6 +6,9 @@ export interface CacheKeyInput {
   sourceLanguage?: string;
   providerId?: string;
   modelId?: string;
+  context?: ContextPacket;
+  customPrompt?: string;
+  documentUrl?: string;
 }
 
 export interface CacheEntry {

@@ -7,6 +7,20 @@ import {
 import { TranslationCache } from './types';
 import { generateCacheKey } from './key';
 
+function rebindResultToRequest(
+  result: TranslationResult,
+  request: TranslationRequest
+): TranslationResult {
+  const pageId =
+    request.image.pageIndex !== undefined ? `page_${request.image.pageIndex}` : result.pageId;
+
+  return {
+    ...result,
+    imageId: request.image.id,
+    pageId,
+  };
+}
+
 export class CachedTranslationProvider implements TranslationProvider {
   public readonly id: string;
   public readonly name: string;
@@ -36,6 +50,8 @@ export class CachedTranslationProvider implements TranslationProvider {
       sourceLanguage: request.sourceLanguage,
       providerId: this.provider.id,
       modelId,
+      context: request.context,
+      customPrompt: request.options?.customPrompt,
     });
 
     if (request.options?.bypassCache) {
@@ -45,22 +61,24 @@ export class CachedTranslationProvider implements TranslationProvider {
       } catch {
         // Cache persistence failure should not interrupt the translation flow.
       }
-      return result;
+      return rebindResultToRequest(result, request);
     }
 
     const ongoing = this.inFlight.get(cacheKey);
     if (ongoing) {
-      return ongoing;
+      const result = await ongoing;
+      return rebindResultToRequest(result, request);
     }
 
     const cached = await this.cache.get(cacheKey);
     if (cached) {
-      return cached;
+      return rebindResultToRequest(cached, request);
     }
 
     const ongoingAfterCache = this.inFlight.get(cacheKey);
     if (ongoingAfterCache) {
-      return ongoingAfterCache;
+      const result = await ongoingAfterCache;
+      return rebindResultToRequest(result, request);
     }
 
     const execute = async (): Promise<TranslationResult> => {
@@ -80,7 +98,8 @@ export class CachedTranslationProvider implements TranslationProvider {
     });
 
     this.inFlight.set(cacheKey, task);
-    return task;
+    const result = await task;
+    return rebindResultToRequest(result, request);
   }
 
   async clearCache(): Promise<void> {

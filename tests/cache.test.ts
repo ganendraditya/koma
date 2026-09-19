@@ -119,6 +119,61 @@ describe('KOMA-008 Stage 1: Deterministic Cache Key Generator', () => {
     expect(key1).toBe(key2);
   });
 
+  it('differentiates protocol-relative URLs on different hosts', () => {
+    const keyA = generateCacheKey({
+      image: { id: 'img_1', url: '//cdn-a.example/page.jpg' },
+      targetLanguage: 'id',
+    });
+    const keyB = generateCacheKey({
+      image: { id: 'img_2', url: '//cdn-b.example/page.jpg' },
+      targetLanguage: 'id',
+    });
+
+    expect(keyA).not.toBe(keyB);
+    expect(keyA).toContain('cdn-a.example');
+    expect(keyB).toContain('cdn-b.example');
+  });
+
+  it('resolves genuinely relative URLs against document origin and differentiates hosts', () => {
+    const keyA = generateCacheKey({
+      image: { id: 'img_1', url: '/chapters/01/page.jpg' },
+      targetLanguage: 'id',
+      documentUrl: 'https://mangasite-a.com/reader/ch1',
+    });
+    const keyB = generateCacheKey({
+      image: { id: 'img_2', url: '/chapters/01/page.jpg' },
+      targetLanguage: 'id',
+      documentUrl: 'https://mangasite-b.com/reader/ch1',
+    });
+
+    expect(keyA).not.toBe(keyB);
+    expect(keyA).toContain('mangasite-a.com');
+    expect(keyB).toContain('mangasite-b.com');
+  });
+
+  it('differentiates cache keys when translation context or pinned glossary changes', () => {
+    const baseInput = {
+      image: { id: 'img_001', url: 'https://cdn.example.com/p1.png' },
+      targetLanguage: 'id',
+    };
+
+    const keyGlossary1 = generateCacheKey({
+      ...baseInput,
+      context: {
+        glossary: [{ original: '覇気', translation: 'Haki', isHard: true }],
+      },
+    });
+
+    const keyGlossary2 = generateCacheKey({
+      ...baseInput,
+      context: {
+        glossary: [{ original: '覇気', translation: 'Ambition', isHard: true }],
+      },
+    });
+
+    expect(keyGlossary1).not.toBe(keyGlossary2);
+  });
+
   it('normalizes case for language, provider, and model', () => {
     const keyLower = generateCacheKey({
       image: { id: 'img_1' },
@@ -505,5 +560,140 @@ describe('KOMA-008 Stage 3: Cached Provider Wrapper (End-to-End Cache Hit Verifi
 
     expect(result).toEqual(mockResult);
     expect(rawTranslateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-translates image when pinned glossary context changes rather than returning stale cached result', async () => {
+    const { CachedTranslationProvider, KomaTranslationCache } = await import('../core/cache');
+    const { vi } = await import('vitest');
+
+    const resultHaki = {
+      ...mockResult,
+      bubbles: [{ ...mockResult.bubbles[0], translatedText: 'Gunakan Haki!' }],
+    };
+    const resultAmbition = {
+      ...mockResult,
+      bubbles: [{ ...mockResult.bubbles[0], translatedText: 'Gunakan Ambition!' }],
+    };
+
+    const rawTranslateMock = vi
+      .fn()
+      .mockResolvedValueOnce(resultHaki)
+      .mockResolvedValueOnce(resultAmbition);
+
+    const mockProvider = {
+      id: 'gemini-multimodal',
+      name: 'Google Gemini Multimodal',
+      capabilities: vi.fn(),
+      translatePage: rawTranslateMock,
+    };
+
+    const cache = new KomaTranslationCache();
+    const cachedProvider = new CachedTranslationProvider(mockProvider, cache);
+
+    // First request with pinned glossary "Haki"
+    const res1 = await cachedProvider.translatePage({
+      image: mockImage,
+      targetLanguage: 'id',
+      context: {
+        glossary: [{ original: '覇気', translation: 'Haki', isHard: true }],
+      },
+    });
+    expect(res1.bubbles[0].translatedText).toBe('Gunakan Haki!');
+    expect(rawTranslateMock).toHaveBeenCalledTimes(1);
+
+    // Second request with changed pinned glossary "Ambition"
+    const res2 = await cachedProvider.translatePage({
+      image: mockImage,
+      targetLanguage: 'id',
+      context: {
+        glossary: [{ original: '覇気', translation: 'Ambition', isHard: true }],
+      },
+    });
+    expect(res2.bubbles[0].translatedText).toBe('Gunakan Ambition!');
+    expect(rawTranslateMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('rebinds cached results to current image instance and pageId on cache hits', async () => {
+    const { CachedTranslationProvider, KomaTranslationCache } = await import('../core/cache');
+    const { vi } = await import('vitest');
+
+    const rawTranslateMock = vi.fn().mockResolvedValue({
+      ...mockResult,
+      imageId: 'session-one',
+      pageId: 'page_0',
+    });
+
+    const mockProvider = {
+      id: 'gemini-multimodal',
+      name: 'Google Gemini Multimodal',
+      capabilities: vi.fn(),
+      translatePage: rawTranslateMock,
+    };
+
+    const cache = new KomaTranslationCache();
+    const cachedProvider = new CachedTranslationProvider(mockProvider, cache);
+
+    const res1 = await cachedProvider.translatePage({
+      image: { id: 'session-one', url: 'https://cdn.example.com/p1.png', pageIndex: 0 },
+      targetLanguage: 'id',
+    });
+    expect(res1.imageId).toBe('session-one');
+    expect(res1.pageId).toBe('page_0');
+    expect(rawTranslateMock).toHaveBeenCalledTimes(1);
+
+    // Second request for identical URL in a new session with different id and pageIndex
+    const res2 = await cachedProvider.translatePage({
+      image: { id: 'session-two', url: 'https://cdn.example.com/p1.png', pageIndex: 7 },
+      targetLanguage: 'id',
+    });
+    // Must be cache hit
+    expect(rawTranslateMock).toHaveBeenCalledTimes(1);
+    // Must be rebound to the new request instance
+    expect(res2.imageId).toBe('session-two');
+    expect(res2.pageId).toBe('page_7');
+  });
+
+  it('rebinds coalesced in-flight responses to each caller image instance', async () => {
+    const { CachedTranslationProvider, KomaTranslationCache } = await import('../core/cache');
+    const { vi } = await import('vitest');
+
+    let resolveDelay: (val: typeof mockResult) => void;
+    const delayedPromise = new Promise<typeof mockResult>((resolve) => {
+      resolveDelay = resolve;
+    });
+    const rawTranslateMock = vi.fn().mockImplementation(() => delayedPromise);
+
+    const mockProvider = {
+      id: 'gemini-multimodal',
+      name: 'Google Gemini Multimodal',
+      capabilities: vi.fn(),
+      translatePage: rawTranslateMock,
+    };
+
+    const cache = new KomaTranslationCache();
+    const cachedProvider = new CachedTranslationProvider(mockProvider, cache);
+
+    const req1 = cachedProvider.translatePage({
+      image: { id: 'caller-one', url: 'https://cdn.example.com/shared.png', pageIndex: 1 },
+      targetLanguage: 'id',
+    });
+    const req2 = cachedProvider.translatePage({
+      image: { id: 'caller-two', url: 'https://cdn.example.com/shared.png', pageIndex: 2 },
+      targetLanguage: 'id',
+    });
+
+    resolveDelay!({
+      ...mockResult,
+      imageId: 'caller-one',
+      pageId: 'page_1',
+    });
+
+    const [res1, res2] = await Promise.all([req1, req2]);
+
+    expect(rawTranslateMock).toHaveBeenCalledTimes(1);
+    expect(res1.imageId).toBe('caller-one');
+    expect(res1.pageId).toBe('page_1');
+    expect(res2.imageId).toBe('caller-two');
+    expect(res2.pageId).toBe('page_2');
   });
 });
