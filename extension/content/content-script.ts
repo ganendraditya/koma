@@ -9,8 +9,12 @@ import {
   type PingResponse,
   type CheckPageStatusResponse,
 } from '@shared';
+import { DOMOverlayRenderer } from '@core/renderer';
+import { resolveTargetImage } from './target-image';
 
 console.log('[Koma] Content script loaded on:', window.location.href);
+
+const overlayRenderer = new DOMOverlayRenderer();
 
 // Listen for messages from popup or background service worker
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -74,6 +78,37 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     );
 
     // Keep message channel open for async response
+    return true;
+  }
+
+  if (message.type === EXTENSION_MESSAGE_TYPES.RENDER_TRANSLATION_OVERLAY) {
+    try {
+      const targetImage = resolveTargetImage(message.targetSelector);
+      const renderResult = overlayRenderer.render(message.result, targetImage);
+      sendResponse({
+        success: true,
+        imageId: renderResult.imageId,
+        bubbleCount: renderResult.bubbleCount,
+      });
+    } catch (err) {
+      sendResponse({
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return true;
+  }
+
+  if (message.type === EXTENSION_MESSAGE_TYPES.CLEAR_ALL_OVERLAYS) {
+    try {
+      overlayRenderer.removeAllOverlays();
+      sendResponse({ success: true });
+    } catch (err) {
+      sendResponse({
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     return true;
   }
 
