@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Koma — Manga & Manhwa Translator",
+  "name": "Koma - Manga & Manhwa Translator",
   "version": "0.1.0",
   "description": "Real-time in-browser manga & manhwa translator with DOM text overlay",
   "permissions": ["storage", "activeTab"],

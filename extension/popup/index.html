@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Koma — Manga Translator</title>
+    <title>Koma - Manga Translator</title>
     <style>
       :root {
         --bg-color: #090d16;
@@ -327,11 +327,11 @@
       </div>
       <div class="status-row">
         <span>Target Site</span>
-        <span class="status-value" id="site-text">—</span>
+        <span class="status-value" id="site-text">-</span>
       </div>
       <div class="status-row">
         <span>Manga Images</span>
-        <span class="status-value" id="image-count-text">—</span>
+        <span class="status-value" id="image-count-text">-</span>
       </div>
     </div>
 
@@ -355,7 +355,7 @@
       </div>
       <div class="diagnostic-item">
         <span>Detected Images:</span>
-        <span id="diag-img-count" style="color: var(--text-muted)">—</span>
+        <span id="diag-img-count" style="color: var(--text-muted)">-</span>
       </div>
     </div>
 
@@ -400,9 +400,14 @@
           </select>
         </div>
 
-        <button id="btn-save-settings" class="btn btn-secondary" type="button">
-          Save Settings
-        </button>
+        <div style="display: flex; gap: 8px; margin-top: 10px">
+          <button id="btn-save-settings" class="btn btn-secondary" type="button" style="flex: 1">
+            Save Settings
+          </button>
+          <button id="btn-reset-context" class="btn btn-secondary" type="button" style="flex: 1">
+            Reset Context
+          </button>
+        </div>
         <div id="settings-feedback" class="feedback-msg"></div>
       </div>
     </div>

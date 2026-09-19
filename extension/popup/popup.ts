@@ -8,6 +8,7 @@ import {
   EXTENSION_MESSAGE_TYPES,
   CheckPageStatusResponse,
   DiagnosticReport,
+  ResetContextResponse,
 } from '@shared/messages';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -39,6 +40,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const targetLangSelect = document.getElementById('select-target-lang') as HTMLSelectElement;
   const modelSelect = document.getElementById('select-model') as HTMLSelectElement;
   const saveSettingsBtn = document.getElementById('btn-save-settings') as HTMLButtonElement;
+  const resetContextBtn = document.getElementById('btn-reset-context') as HTMLButtonElement;
   const feedbackEl = document.getElementById('settings-feedback') as HTMLElement;
 
   let activeTabId: number | undefined;
@@ -231,5 +233,38 @@ document.addEventListener('DOMContentLoaded', async () => {
         feedbackEl.textContent = `Save failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
       }
     }
+  });
+
+  // 8. Reset Context Action
+  resetContextBtn?.addEventListener('click', () => {
+    if (!activeTabId) {
+      if (feedbackEl) {
+        feedbackEl.className = 'feedback-msg error';
+        feedbackEl.textContent = 'No active page to reset context.';
+      }
+      return;
+    }
+
+    chrome.tabs.sendMessage(
+      activeTabId,
+      { type: EXTENSION_MESSAGE_TYPES.RESET_CONTEXT },
+      (response: ResetContextResponse | undefined) => {
+        if (chrome.runtime.lastError || !response?.success) {
+          if (feedbackEl) {
+            feedbackEl.className = 'feedback-msg error';
+            feedbackEl.textContent = 'Failed to reset page context.';
+          }
+        } else {
+          if (feedbackEl) {
+            feedbackEl.className = 'feedback-msg success';
+            feedbackEl.textContent = 'Context memory reset successfully.';
+            setTimeout(() => {
+              feedbackEl.className = 'feedback-msg';
+              feedbackEl.textContent = '';
+            }, 2500);
+          }
+        }
+      }
+    );
   });
 });

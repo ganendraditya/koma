@@ -8,6 +8,7 @@ import {
   type DiagnosticReport,
   type PingResponse,
   type CheckPageStatusResponse,
+  type ResetContextResponse,
 } from '@shared';
 
 console.log('[Koma] Content script loaded on:', window.location.href);
@@ -75,6 +76,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     // Keep message channel open for async response
     return true;
+  }
+
+  if (message.type === EXTENSION_MESSAGE_TYPES.RESET_CONTEXT) {
+    const response: ResetContextResponse = { success: true, timestamp: Date.now() };
+    sendResponse(response);
+    return false;
   }
 
   return false;

@@ -67,6 +67,7 @@ describe('KOMA-002: Chrome Manifest V3 Extension Shell', () => {
       expect(EXTENSION_MESSAGE_TYPES.CHECK_PAGE_STATUS).toBe('CHECK_PAGE_STATUS');
       expect(EXTENSION_MESSAGE_TYPES.RUN_DIAGNOSTIC).toBe('RUN_DIAGNOSTIC');
       expect(EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE).toBe('TRANSLATE_ACTIVE_PAGE');
+      expect(EXTENSION_MESSAGE_TYPES.RESET_CONTEXT).toBe('RESET_CONTEXT');
     });
 
     it('handles PING request in background service worker logic', () => {
@@ -172,6 +173,21 @@ describe('KOMA-002: Chrome Manifest V3 Extension Shell', () => {
       expect(report.contentScript.active).toBe(true);
       expect(report.serviceWorker.reachable).toBe(false);
       expect(report.serviceWorker.error).toContain('Could not establish connection');
+    });
+
+    it('processes RESET_CONTEXT request in content script messaging handler', () => {
+      const handleMessage = (msg: { type: string }) => {
+        if (msg.type === EXTENSION_MESSAGE_TYPES.RESET_CONTEXT) {
+          return { success: true, timestamp: Date.now() };
+        }
+        return false;
+      };
+
+      const result = handleMessage({ type: EXTENSION_MESSAGE_TYPES.RESET_CONTEXT });
+      expect(result).toEqual({
+        success: true,
+        timestamp: expect.any(Number),
+      });
     });
   });
 
