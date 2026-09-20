@@ -15,7 +15,7 @@ import { TranslationProvider, TranslationResult } from '@core/contracts';
 
 console.log('[Koma] Content script loaded on:', window.location.href);
 
-// Dummy implementations for unmerged dependencies
+// TODO: Replace dummy implementations with actual system components (e.g., real SiteAdapter, TranslationProvider, Renderer) before production release.
 const dummyAdapter: SiteAdapter = {
   name: 'DummyAdapter',
   matches: () => true,
@@ -128,6 +128,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           imageId: state.imageId,
           status: state.status,
           error: state.error?.message
+        }, () => {
+          // Ignore error if popup is closed and no listener exists
+          const _ = chrome.runtime.lastError;
         });
       }
     }).catch(console.error);

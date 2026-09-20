@@ -36,7 +36,10 @@ describe('TranslationOrchestrator', () => {
     (mockAdapter.detectMangaImages as any).mockReturnValue(images);
     
     const result: TranslationResult = { pageId: 'page-1', imageId: 'img-1', sourceLanguage: 'ja', targetLanguage: 'id', bubbles: [] };
-    (mockProvider.translatePage as any).mockResolvedValue(result);
+    
+    let resolveTranslation: (val: any) => void;
+    const translationPromise = new Promise(resolve => { resolveTranslation = resolve; });
+    (mockProvider.translatePage as any).mockReturnValue(translationPromise);
 
     const orchestrator = new TranslationOrchestrator(mockProvider, mockAdapter, mockRenderer);
     
@@ -46,6 +49,12 @@ describe('TranslationOrchestrator', () => {
       image: images[0],
       targetLanguage: 'id',
     });
+    
+    // Resolve the promise to let processing complete
+    resolveTranslation!(result);
+    // Wait a tick for promises to flush
+    await new Promise(r => setTimeout(r, 0));
+
     expect(mockRenderer.render).toHaveBeenCalledWith(result);
 
     const state = orchestrator.getState().get('img-1');
@@ -59,12 +68,16 @@ describe('TranslationOrchestrator', () => {
     (mockAdapter.detectMangaImages as any).mockReturnValue(images);
     
     const result: TranslationResult = { pageId: 'page-1', imageId: 'img-1', sourceLanguage: 'ja', targetLanguage: 'id', bubbles: [] };
+    
+    // Auto-resolve mock
     (mockProvider.translatePage as any).mockResolvedValue(result);
 
     const orchestrator = new TranslationOrchestrator(mockProvider, mockAdapter, mockRenderer);
     
     // First translation
     await orchestrator.translateNext();
+    // Wait for the queue to pump
+    await new Promise(r => setTimeout(r, 0));
     expect(mockProvider.translatePage).toHaveBeenCalledTimes(1);
 
     // Second request should skip img-1 because it's completed
@@ -87,6 +100,9 @@ describe('TranslationOrchestrator', () => {
     
     // First try (fails)
     await orchestrator.translateNext({ onError: onErrorHandler });
+    // wait for rejection
+    await new Promise(r => setTimeout(r, 0));
+    
     expect(orchestrator.getState().get('img-1')?.status).toBe('failed');
     expect(onErrorHandler).toHaveBeenCalledWith('img-1', error);
 
@@ -96,6 +112,9 @@ describe('TranslationOrchestrator', () => {
 
     // Retry
     await orchestrator.retry('img-1');
+    // Wait for resolution
+    await new Promise(r => setTimeout(r, 0));
+
     expect(orchestrator.getState().get('img-1')?.status).toBe('completed');
     expect(mockRenderer.render).toHaveBeenCalledWith(result);
   });
@@ -112,15 +131,17 @@ describe('TranslationOrchestrator', () => {
       Promise.resolve({ pageId: 'page-1', imageId: req.image.id, sourceLanguage: 'ja', targetLanguage: 'id', bubbles: [] })
     );
 
+    // Concurrency limit 1 is default
     const orchestrator = new TranslationOrchestrator(mockProvider, mockAdapter, mockRenderer);
     
+    // One call should trigger the queue pump to process all 3 eventually
     await orchestrator.translateNext();
+    
+    // Wait for the chain to complete
+    await new Promise(r => setTimeout(r, 10));
+
     expect(orchestrator.getState().get('img-1')?.status).toBe('completed');
-
-    await orchestrator.translateNext();
     expect(orchestrator.getState().get('img-2')?.status).toBe('completed');
-
-    await orchestrator.translateNext();
     expect(orchestrator.getState().get('img-3')?.status).toBe('completed');
 
     expect(mockProvider.translatePage).toHaveBeenCalledTimes(3);
