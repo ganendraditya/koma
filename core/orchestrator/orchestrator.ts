@@ -42,7 +42,11 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     this.inFlightCount = 0;
   }
 
-  private updateState(imageId: string, partial: Partial<ImageTranslationState>, handler?: OrchestratorEventHandler) {
+  private updateState(
+    imageId: string,
+    partial: Partial<ImageTranslationState>,
+    handler?: OrchestratorEventHandler
+  ) {
     const existing = this.stateMap.get(imageId) || { imageId, status: 'idle' };
     const updated: ImageTranslationState = { ...existing, ...partial };
     this.stateMap.set(imageId, updated);
@@ -55,7 +59,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
         console.error('[Koma Orchestrator] onProgress callback threw:', e);
       }
     }
-    
+
     return updated;
   }
 
@@ -87,7 +91,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       const state = this.stateMap.get(img.id);
       if (state && state.status === 'idle') {
         // Start process in background without awaiting it to allow concurrency
-        this.processImage(img.id, handler).catch(e => {
+        this.processImage(img.id, handler).catch((e) => {
           console.error('[Koma Orchestrator] Background translation crashed for', img.id, e);
         });
         startedAny = true;
@@ -106,11 +110,14 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     return await this.processImage(imageId, handler);
   }
 
-  private async processImage(imageId: string, handler?: OrchestratorEventHandler): Promise<boolean> {
+  private async processImage(
+    imageId: string,
+    handler?: OrchestratorEventHandler
+  ): Promise<boolean> {
     // Check concurrency limit
     if (this.inFlightCount >= (this.options.concurrencyLimit || 1)) {
       // TODO: Implement queuing logic to buffer translation requests when the concurrency limit is reached instead of dropping them silently.
-      return false; 
+      return false;
     }
 
     const state = this.stateMap.get(imageId);
@@ -120,7 +127,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
 
     // Find the original image details from the adapter
     const images = this.adapter.detectMangaImages();
-    const targetImage = images.find(img => img.id === imageId);
+    const targetImage = images.find((img) => img.id === imageId);
     if (!targetImage) {
       const err = new Error(`Image ${imageId} no longer detected by adapter`);
       this.updateState(imageId, { status: 'failed', error: err }, handler);
@@ -143,7 +150,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       if (this.sessionId !== currentSession) return false;
 
       this.updateState(imageId, { status: 'completed', result }, handler);
-      
+
       // Render immediately upon success
       try {
         this.renderer.render(result);
@@ -158,7 +165,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       } catch (e) {
         console.error('[Koma Orchestrator] onComplete callback threw:', e);
       }
-      
+
       // Attempt to pull next item from queue if any are left
       this.pumpQueue(handler);
       return true;
@@ -166,7 +173,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       if (this.sessionId !== currentSession) return false;
       const err = error instanceof Error ? error : new Error(String(error));
       this.updateState(imageId, { status: 'failed', error: err }, handler);
-      
+
       try {
         if (handler?.onError) {
           handler.onError(imageId, err);
@@ -174,7 +181,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       } catch (e) {
         console.error('[Koma Orchestrator] onError callback threw:', e);
       }
-      
+
       this.pumpQueue(handler);
       return false;
     } finally {
@@ -189,13 +196,13 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
    */
   private pumpQueue(handler?: OrchestratorEventHandler): void {
     const limit = this.options.concurrencyLimit || 1;
-    // We expect inFlightCount to decrease soon in the finally block, 
+    // We expect inFlightCount to decrease soon in the finally block,
     // or we check if there's room assuming the caller's finally block is about to execute.
     // To avoid race conditions, we can just call translateNext in the next microtask.
     Promise.resolve().then(() => {
-       if (this.inFlightCount < limit) {
-         this.translateNext(handler).catch(() => {});
-       }
+      if (this.inFlightCount < limit) {
+        this.translateNext(handler).catch(() => {});
+      }
     });
   }
 }

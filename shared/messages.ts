@@ -67,4 +67,5 @@ export interface TranslationProgressEvent {
   error?: string;
 }
 
-export type ExtensionRequest = PingRequest | CheckPageStatusRequest | RunDiagnosticRequest | TranslateActivePageRequest;
+export type ExtensionRequest =
+  PingRequest | CheckPageStatusRequest | RunDiagnosticRequest | TranslateActivePageRequest;

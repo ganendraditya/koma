@@ -30,14 +30,14 @@ export interface OrchestratorEventHandler {
 }
 
 export interface ITranslationOrchestrator {
-  /** 
-   * Triggers translation for the next untranslated image(s) on the page. 
+  /**
+   * Triggers translation for the next untranslated image(s) on the page.
    * Idempotent per image.
    */
   translateNext(handler?: OrchestratorEventHandler): Promise<boolean>;
-  
-  /** 
-   * Retries translation for a specific image ID if it previously failed. 
+
+  /**
+   * Retries translation for a specific image ID if it previously failed.
    */
   retry(imageId: string, handler?: OrchestratorEventHandler): Promise<boolean>;
 

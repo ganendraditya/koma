@@ -26,9 +26,9 @@ const dummyAdapter: SiteAdapter = {
       url: img.src,
       pageIndex: i,
       width: img.naturalWidth || 800,
-      height: img.naturalHeight || 1200
+      height: img.naturalHeight || 1200,
     }));
-  }
+  },
 };
 
 const dummyProvider: TranslationProvider = {
@@ -36,21 +36,21 @@ const dummyProvider: TranslationProvider = {
   name: 'Dummy Provider',
   capabilities: () => ({ vision: true, ocr: true, translation: true, boundingBoxes: true }),
   translatePage: async (req) => {
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 1000));
     return {
       pageId: 'page-1',
       imageId: req.image.id,
       sourceLanguage: 'ja',
       targetLanguage: req.targetLanguage,
-      bubbles: []
+      bubbles: [],
     };
-  }
+  },
 };
 
 const dummyRenderer = {
   render: (result: TranslationResult) => {
     console.log(`[Koma Renderer] Rendered overlay for ${result.imageId}`);
-  }
+  },
 };
 
 const orchestrator = new TranslationOrchestrator(dummyProvider, dummyAdapter, dummyRenderer);
@@ -121,20 +121,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE) {
-    orchestrator.translateNext({
-      onProgress: (state) => {
-        chrome.runtime.sendMessage({
-          type: EXTENSION_MESSAGE_TYPES.TRANSLATION_PROGRESS,
-          imageId: state.imageId,
-          status: state.status,
-          error: state.error?.message
-        }, () => {
-          // Ignore error if popup is closed and no listener exists
-          void chrome.runtime.lastError;
-        });
-      }
-    }).catch(console.error);
-    
+    orchestrator
+      .translateNext({
+        onProgress: (state) => {
+          chrome.runtime.sendMessage(
+            {
+              type: EXTENSION_MESSAGE_TYPES.TRANSLATION_PROGRESS,
+              imageId: state.imageId,
+              status: state.status,
+              error: state.error?.message,
+            },
+            () => {
+              // Ignore error if popup is closed and no listener exists
+              void chrome.runtime.lastError;
+            }
+          );
+        },
+      })
+      .catch(console.error);
+
     sendResponse({ success: true });
     return false;
   }
