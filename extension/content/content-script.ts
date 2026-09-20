@@ -130,7 +130,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           error: state.error?.message
         }, () => {
           // Ignore error if popup is closed and no listener exists
-          const _ = chrome.runtime.lastError;
+          void chrome.runtime.lastError;
         });
       }
     }).catch(console.error);
