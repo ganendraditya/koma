@@ -1,5 +1,5 @@
 import { TranslationProvider } from '@core/contracts';
-import { SiteAdapter } from '../../adapters';
+import { SiteAdapter } from '@adapters';
 import {
   ITranslationOrchestrator,
   IRenderer,
@@ -16,6 +16,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
 
   private stateMap: Map<string, ImageTranslationState> = new Map();
   private inFlightCount = 0;
+  private sessionId = 0;
 
   constructor(
     provider: TranslationProvider,
@@ -36,6 +37,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
   }
 
   public reset(): void {
+    this.sessionId++;
     this.stateMap.clear();
     this.inFlightCount = 0;
   }
@@ -57,10 +59,10 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     return updated;
   }
 
-  public async translateNext(handler?: OrchestratorEventHandler): Promise<void> {
+  public async translateNext(handler?: OrchestratorEventHandler): Promise<boolean> {
     const images = this.adapter.detectMangaImages();
     if (!images || images.length === 0) {
-      return;
+      return false;
     }
 
     // Initialize state for newly discovered images
@@ -71,37 +73,38 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     }
 
     // Find the next eligible image (reading order)
-    const eligibleImage = images.find(img => {
+    const sortedImages = [...images].sort((a, b) => a.pageIndex - b.pageIndex);
+    const eligibleImage = sortedImages.find(img => {
       const state = this.stateMap.get(img.id);
       return state && (state.status === 'idle');
     });
 
     if (!eligibleImage) {
       // Nothing to do
-      return;
+      return false;
     }
 
-    await this.processImage(eligibleImage.id, handler);
+    return await this.processImage(eligibleImage.id, handler);
   }
 
-  public async retry(imageId: string, handler?: OrchestratorEventHandler): Promise<void> {
+  public async retry(imageId: string, handler?: OrchestratorEventHandler): Promise<boolean> {
     const state = this.stateMap.get(imageId);
     if (!state || state.status !== 'failed') {
-      return; // Cannot retry if it doesn't exist or isn't failed
+      return false; // Cannot retry if it doesn't exist or isn't failed
     }
 
-    await this.processImage(imageId, handler);
+    return await this.processImage(imageId, handler);
   }
 
-  private async processImage(imageId: string, handler?: OrchestratorEventHandler): Promise<void> {
-    // Check concurrency limit (for future use with queueing)
+  private async processImage(imageId: string, handler?: OrchestratorEventHandler): Promise<boolean> {
+    // Check concurrency limit
     if (this.inFlightCount >= (this.options.concurrencyLimit || 1)) {
-      return;
+      return false; // Rejects silently. Real queues would buffer here.
     }
 
     const state = this.stateMap.get(imageId);
     if (!state || state.status === 'translating' || state.status === 'completed') {
-      return; // Prevent duplicate work
+      return false; // Prevent duplicate work
     }
 
     // Find the original image details from the adapter
@@ -111,19 +114,22 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       const err = new Error(`Image ${imageId} no longer detected by adapter`);
       this.updateState(imageId, { status: 'failed', error: err }, handler);
       if (handler?.onError) handler.onError(imageId, err);
-      return;
+      return false;
     }
 
+    const currentSession = this.sessionId;
     this.inFlightCount++;
     this.updateState(imageId, { status: 'translating', error: undefined }, handler);
 
     try {
-      // Fetch actual image data (e.g. converting img element to base64 or blob URL)
-      // Since Koma is DOM based, the adapter would give us a URL or data URL in targetImage.src
+      // Fetch actual image data
+      // Since Koma is DOM based, the adapter provides a URL or data URL in targetImage.url or base64Data
       const result = await this.provider.translatePage({
         image: targetImage,
-        targetLanguage: 'id', // Default to Indonesian for now, or get from options
+        targetLanguage: this.options.targetLanguage ?? 'id',
       });
+
+      if (this.sessionId !== currentSession) return false;
 
       this.updateState(imageId, { status: 'completed', result }, handler);
       
@@ -132,18 +138,22 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
         this.renderer.render(result);
       } catch (renderError) {
         console.error('[Koma Orchestrator] Rendering failed for', imageId, renderError);
-        // We do not fail the overall state since translation succeeded, but we might log it
       }
 
       if (handler?.onComplete) {
         handler.onComplete(imageId, result);
       }
+      return true;
     } catch (error) {
+      if (this.sessionId !== currentSession) return false;
       const err = error instanceof Error ? error : new Error(String(error));
       this.updateState(imageId, { status: 'failed', error: err }, handler);
       if (handler?.onError) handler.onError(imageId, err);
+      return false;
     } finally {
-      this.inFlightCount--;
+      if (this.sessionId === currentSession) {
+        this.inFlightCount = Math.max(0, this.inFlightCount - 1);
+      }
     }
   }
 }

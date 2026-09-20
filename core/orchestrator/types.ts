@@ -12,6 +12,8 @@ export interface ImageTranslationState {
 export interface OrchestratorOptions {
   /** Maximum number of concurrent translations */
   concurrencyLimit?: number;
+  /** Target language ISO code (e.g. 'id', 'en') */
+  targetLanguage?: string;
 }
 
 export interface IRenderer {
@@ -32,12 +34,12 @@ export interface ITranslationOrchestrator {
    * Triggers translation for the next untranslated image(s) on the page. 
    * Idempotent per image.
    */
-  translateNext(handler?: OrchestratorEventHandler): Promise<void>;
+  translateNext(handler?: OrchestratorEventHandler): Promise<boolean>;
   
   /** 
    * Retries translation for a specific image ID if it previously failed. 
    */
-  retry(imageId: string, handler?: OrchestratorEventHandler): Promise<void>;
+  retry(imageId: string, handler?: OrchestratorEventHandler): Promise<boolean>;
 
   /**
    * Retrieves the current translation state for all known images.
