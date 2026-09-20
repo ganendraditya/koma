@@ -25,8 +25,8 @@ export class CachedTranslationProvider implements TranslationProvider {
   public readonly id: string;
   public readonly name: string;
   public readonly modelName?: string;
+  public readonly cache: TranslationCache;
   private readonly provider: TranslationProvider;
-  private readonly cache: TranslationCache;
   private readonly inFlight = new Map<string, Promise<TranslationResult>>();
 
   constructor(provider: TranslationProvider, cache: TranslationCache) {

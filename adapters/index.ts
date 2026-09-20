@@ -18,4 +18,9 @@ export interface SiteAdapter {
    * Scrapes or observes manga images from the reader DOM.
    */
   detectMangaImages(): MangaImage[];
+
+  /**
+   * Resolves the DOM element corresponding to a detected manga image.
+   */
+  getImageElement?(image: MangaImage): Element | null;
 }
