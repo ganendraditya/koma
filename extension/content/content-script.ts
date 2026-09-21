@@ -3,6 +3,7 @@
  * Injected into supported manga reader web pages to detect images and render DOM overlays.
  */
 
+import { MangaDexAdapter } from '@adapters';
 import {
   EXTENSION_MESSAGE_TYPES,
   type DiagnosticReport,
@@ -10,27 +11,25 @@ import {
   type CheckPageStatusResponse,
 } from '@shared';
 import { TranslationOrchestrator } from '@core/orchestrator';
-import { SiteAdapter } from '../../adapters';
 import { TranslationProvider, TranslationResult } from '@core/contracts';
 
 console.log('[Koma] Content script loaded on:', window.location.href);
 
-// TODO: Replace dummy implementations with actual system components (e.g., real SiteAdapter, TranslationProvider, Renderer) before production release.
-const dummyAdapter: SiteAdapter = {
-  name: 'DummyAdapter',
-  matches: () => true,
-  detectMangaImages: () => {
-    // Return all images on the page for demo purposes
-    return Array.from(document.querySelectorAll('img')).map((img, i) => ({
-      id: `dummy-img-${i}`,
-      url: img.src,
-      pageIndex: i,
-      width: img.naturalWidth || 800,
-      height: img.naturalHeight || 1200,
-    }));
-  },
-};
+const adapter = new MangaDexAdapter();
 
+if (import.meta.env.MODE === 'development') {
+  const observe = () =>
+    adapter.observeMangaImages((images) => {
+      console.debug('[Koma] Detected manga images:', images.length);
+    });
+  let stopObserving = observe();
+  window.addEventListener('pagehide', () => stopObserving());
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) stopObserving = observe();
+  });
+}
+
+// TODO: Replace dummy implementations with actual system components (e.g., real TranslationProvider, Renderer) before production release.
 const dummyProvider: TranslationProvider = {
   id: 'dummy-provider',
   name: 'Dummy Provider',
@@ -53,7 +52,7 @@ const dummyRenderer = {
   },
 };
 
-const orchestrator = new TranslationOrchestrator(dummyProvider, dummyAdapter, dummyRenderer);
+const orchestrator = new TranslationOrchestrator(dummyProvider, adapter, dummyRenderer);
 
 // Listen for messages from popup or background service worker
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -65,7 +64,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const response: CheckPageStatusResponse = {
       active: true,
       url: window.location.href,
-      imageCount: document.querySelectorAll('img').length,
+      imageCount: adapter.detectMangaImages().length,
+      isSupportedSite: adapter.matches(window.location.href),
     };
     sendResponse(response);
     return true;
@@ -106,7 +106,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           url: window.location.href,
           contentScript: {
             active: true,
-            detectedImages: document.querySelectorAll('img').length,
+            detectedImages: adapter.detectMangaImages().length,
             readyState: document.readyState,
           },
           serviceWorker: serviceWorkerStatus,
