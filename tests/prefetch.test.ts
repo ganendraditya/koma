@@ -38,6 +38,7 @@ describe('Look-Ahead Translation Prefetch (KOMA-011)', () => {
       name: 'MockAdapter',
       matches: () => true,
       detectMangaImages: vi.fn().mockReturnValue([]),
+      observeMangaImages: vi.fn().mockReturnValue(() => {}),
     };
 
     mockProvider = {

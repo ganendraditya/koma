@@ -33,7 +33,7 @@
       "@shared/*": ["shared/*"]
     },
 
-    "types": ["chrome", "node"]
+    "types": ["chrome", "node", "vite/client"]
   },
   "include": [
     "extension/**/*.ts",

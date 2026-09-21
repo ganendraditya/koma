@@ -23,4 +23,9 @@ export interface SiteAdapter {
    * Resolves the DOM element corresponding to a detected manga image.
    */
   getImageElement?(image: MangaImage): Element | null;
+
+  /** Emits an initial snapshot and changed snapshots; returns a cleanup function. */
+  observeMangaImages(onChange: (images: MangaImage[]) => void): () => void;
 }
+
+export { MangaDexAdapter } from './mangadex';
