@@ -27,13 +27,12 @@ describe('TranslationOrchestrator', () => {
       render: vi.fn(),
     };
   });
-
   it('translates the first untranslated image correctly', async () => {
     const images: MangaImage[] = [
       { id: 'img-1', url: 'blob:1', pageIndex: 0, width: 100, height: 100 },
       { id: 'img-2', url: 'blob:2', pageIndex: 1, width: 100, height: 100 },
     ];
-    (mockAdapter.detectMangaImages as any).mockReturnValue(images);
+    vi.mocked(mockAdapter.detectMangaImages).mockReturnValue(images);
 
     const result: TranslationResult = {
       pageId: 'page-1',
@@ -43,11 +42,11 @@ describe('TranslationOrchestrator', () => {
       bubbles: [],
     };
 
-    let resolveTranslation: (val: any) => void;
-    const translationPromise = new Promise((resolve) => {
+    let resolveTranslation: (val: TranslationResult) => void;
+    const translationPromise = new Promise<TranslationResult>((resolve) => {
       resolveTranslation = resolve;
     });
-    (mockProvider.translatePage as any).mockReturnValue(translationPromise);
+    vi.mocked(mockProvider.translatePage).mockReturnValue(translationPromise);
 
     const orchestrator = new TranslationOrchestrator(mockProvider, mockAdapter, mockRenderer);
 
@@ -73,7 +72,7 @@ describe('TranslationOrchestrator', () => {
     const images: MangaImage[] = [
       { id: 'img-1', url: 'blob:1', pageIndex: 0, width: 100, height: 100 },
     ];
-    (mockAdapter.detectMangaImages as any).mockReturnValue(images);
+    vi.mocked(mockAdapter.detectMangaImages).mockReturnValue(images);
 
     const result: TranslationResult = {
       pageId: 'page-1',
@@ -84,7 +83,7 @@ describe('TranslationOrchestrator', () => {
     };
 
     // Auto-resolve mock
-    (mockProvider.translatePage as any).mockResolvedValue(result);
+    vi.mocked(mockProvider.translatePage).mockResolvedValue(result);
 
     const orchestrator = new TranslationOrchestrator(mockProvider, mockAdapter, mockRenderer);
 
@@ -92,6 +91,7 @@ describe('TranslationOrchestrator', () => {
     await orchestrator.translateNext();
     // Wait for the queue to pump
     await new Promise((r) => setTimeout(r, 0));
+
     expect(mockProvider.translatePage).toHaveBeenCalledTimes(1);
 
     // Second request should skip img-1 because it's completed
@@ -103,10 +103,10 @@ describe('TranslationOrchestrator', () => {
     const images: MangaImage[] = [
       { id: 'img-1', url: 'blob:1', pageIndex: 0, width: 100, height: 100 },
     ];
-    (mockAdapter.detectMangaImages as any).mockReturnValue(images);
+    vi.mocked(mockAdapter.detectMangaImages).mockReturnValue(images);
 
     const error = new Error('Network timeout');
-    (mockProvider.translatePage as any).mockRejectedValueOnce(error);
+    vi.mocked(mockProvider.translatePage).mockRejectedValueOnce(error);
 
     const orchestrator = new TranslationOrchestrator(mockProvider, mockAdapter, mockRenderer);
 
@@ -128,7 +128,7 @@ describe('TranslationOrchestrator', () => {
       targetLanguage: 'id',
       bubbles: [],
     };
-    (mockProvider.translatePage as any).mockResolvedValueOnce(result);
+    vi.mocked(mockProvider.translatePage).mockResolvedValueOnce(result);
 
     // Retry
     await orchestrator.retry('img-1');
@@ -145,9 +145,9 @@ describe('TranslationOrchestrator', () => {
       { id: 'img-2', url: 'blob:2', pageIndex: 1, width: 100, height: 100 },
       { id: 'img-3', url: 'blob:3', pageIndex: 2, width: 100, height: 100 },
     ];
-    (mockAdapter.detectMangaImages as any).mockReturnValue(images);
+    vi.mocked(mockAdapter.detectMangaImages).mockReturnValue(images);
 
-    (mockProvider.translatePage as any).mockImplementation((req: any) =>
+    vi.mocked(mockProvider.translatePage).mockImplementation((req) =>
       Promise.resolve({
         pageId: 'page-1',
         imageId: req.image.id,
