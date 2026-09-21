@@ -3,6 +3,7 @@
  * Injected into supported manga reader web pages to detect images and render DOM overlays.
  */
 
+import { MangaDexAdapter } from '@adapters';
 import {
   EXTENSION_MESSAGE_TYPES,
   type DiagnosticReport,
@@ -18,6 +19,19 @@ if (typeof window !== 'undefined') {
 
 // Session context owner for active tab / content script session
 export const sessionContextManager: IContextManager = new ContextManager();
+const adapter = new MangaDexAdapter();
+
+if (import.meta.env.MODE === 'development') {
+  const observe = () =>
+    adapter.observeMangaImages((images) => {
+      console.debug('[Koma] Detected manga images:', images.length);
+    });
+  let stopObserving = observe();
+  window.addEventListener('pagehide', () => stopObserving());
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) stopObserving = observe();
+  });
+}
 
 export function handleContentScriptMessage(
   message: unknown,
@@ -32,10 +46,12 @@ export function handleContentScriptMessage(
   const req = message as { type?: string };
 
   if (req.type === EXTENSION_MESSAGE_TYPES.CHECK_PAGE_STATUS) {
+    const pageUrl = typeof window !== 'undefined' ? window.location?.href || '' : '';
     const response: CheckPageStatusResponse = {
       active: true,
-      url: typeof window !== 'undefined' ? window.location?.href || '' : '',
-      imageCount: typeof document !== 'undefined' ? document.querySelectorAll('img').length : 0,
+      url: pageUrl,
+      imageCount: adapter.detectMangaImages().length,
+      isSupportedSite: adapter.matches(pageUrl),
     };
     sendResponse?.(response);
     return true;
@@ -76,8 +92,7 @@ export function handleContentScriptMessage(
           url: typeof window !== 'undefined' ? window.location?.href || '' : '',
           contentScript: {
             active: true,
-            detectedImages:
-              typeof document !== 'undefined' ? document.querySelectorAll('img').length : 0,
+            detectedImages: adapter.detectMangaImages().length,
             readyState: typeof document !== 'undefined' ? document.readyState : 'complete',
           },
           serviceWorker: serviceWorkerStatus,
