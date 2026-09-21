@@ -3,6 +3,7 @@
  * Injected into supported manga reader web pages to detect images and render DOM overlays.
  */
 
+import { MangaDexAdapter } from '@adapters';
 import {
   EXTENSION_MESSAGE_TYPES,
   type DiagnosticReport,
@@ -15,6 +16,19 @@ import { resolveTargetImage } from './target-image';
 console.log('[Koma] Content script loaded on:', window.location.href);
 
 const overlayRenderer = new DOMOverlayRenderer();
+const adapter = new MangaDexAdapter();
+
+if (import.meta.env.MODE === 'development') {
+  const observe = () =>
+    adapter.observeMangaImages((images) => {
+      console.debug('[Koma] Detected manga images:', images.length);
+    });
+  let stopObserving = observe();
+  window.addEventListener('pagehide', () => stopObserving());
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) stopObserving = observe();
+  });
+}
 
 // Listen for messages from popup or background service worker
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -26,7 +40,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const response: CheckPageStatusResponse = {
       active: true,
       url: window.location.href,
-      imageCount: document.querySelectorAll('img').length,
+      imageCount: adapter.detectMangaImages().length,
+      isSupportedSite: adapter.matches(window.location.href),
     };
     sendResponse(response);
     return true;
@@ -67,7 +82,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           url: window.location.href,
           contentScript: {
             active: true,
-            detectedImages: document.querySelectorAll('img').length,
+            detectedImages: adapter.detectMangaImages().length,
             readyState: document.readyState,
           },
           serviceWorker: serviceWorkerStatus,

@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { DOMOverlayRenderer, estimateFittedFontSize, fitTextToBubble } from '../core/renderer';
@@ -123,10 +123,10 @@ describe('KOMA-006: DOM Overlay Renderer', () => {
 
       // box: { ymin: 100, xmin: 200, ymax: 300, xmax: 600 }
       // top: 10.00%, left: 20.00%, width: 40.00%, height: 20.00%
-      expect(firstBubble.element.style.top).toBe('10.00%');
-      expect(firstBubble.element.style.left).toBe('20.00%');
-      expect(firstBubble.element.style.width).toBe('40.00%');
-      expect(firstBubble.element.style.height).toBe('20.00%');
+      expect(firstBubble.element.style.top).toMatch(/^10(\.00)?%$/);
+      expect(firstBubble.element.style.left).toMatch(/^20(\.00)?%$/);
+      expect(firstBubble.element.style.width).toMatch(/^40(\.00)?%$/);
+      expect(firstBubble.element.style.height).toMatch(/^20(\.00)?%$/);
     });
 
     it('3. positions each translation over its corresponding region', () => {
@@ -140,14 +140,14 @@ describe('KOMA-006: DOM Overlay Renderer', () => {
       expect(bubble1?.textElement.textContent).toBe('Apa yang sedang kamu lakukan?');
 
       expect(bubble2).toBeDefined();
-      expect(bubble2?.element.style.top).toBe('50.00%');
-      expect(bubble2?.element.style.left).toBe('15.00%');
+      expect(bubble2?.element.style.top).toMatch(/^50(\.00)?%$/);
+      expect(bubble2?.element.style.left).toMatch(/^15(\.00)?%$/);
       expect(bubble2?.textElement.textContent).toBe('Bukan apa-apa...');
 
       expect(bubble3).toBeDefined();
-      expect(bubble3?.element.style.top).toBe('80.00%');
-      expect(bubble3?.element.style.left).toBe('5.00%');
-      expect(bubble3?.element.style.width).toBe('90.00%');
+      expect(bubble3?.element.style.top).toMatch(/^80(\.00)?%$/);
+      expect(bubble3?.element.style.left).toMatch(/^5(\.00)?%$/);
+      expect(bubble3?.element.style.width).toMatch(/^90(\.00)?%$/);
       expect(bubble3?.textElement.textContent).toBe('Itu adalah cerita di masa lampau.');
     });
 
