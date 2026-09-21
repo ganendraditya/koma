@@ -80,6 +80,9 @@ cp .env.example .env
 
 ## Architecture Principles
 
+The first supported reader is MangaDex. See [MangaDex adapter](docs/MANGADEX_ADAPTER.md)
+for supported routes, lazy-loading behavior, and popup/console verification steps.
+
 For complete technical specifications, refer to [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/ADR-001-translation-contracts.md`](docs/ADR-001-translation-contracts.md).
 
 - **Provider Independence**: Renderers and core pipeline orchestrators communicate strictly through normalized domain contracts (`TranslationResult`, `BoundingBox`), decoupling UI logic from specific AI provider responses.
