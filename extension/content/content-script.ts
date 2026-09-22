@@ -10,8 +10,11 @@ import {
   type PingResponse,
   type CheckPageStatusResponse,
   type ResetContextResponse,
+  type RenderTranslationOverlayRequest,
 } from '@shared';
 import { ContextManager, type IContextManager } from '@core/context';
+import { DOMOverlayRenderer } from '@core/renderer';
+import { resolveTargetImage } from './target-image';
 
 if (typeof window !== 'undefined') {
   console.log('[Koma] Content script loaded on:', window.location?.href);
@@ -19,6 +22,7 @@ if (typeof window !== 'undefined') {
 
 // Session context owner for active tab / content script session
 export const sessionContextManager: IContextManager = new ContextManager();
+export const overlayRenderer: DOMOverlayRenderer = new DOMOverlayRenderer();
 const adapter = new MangaDexAdapter();
 
 if (import.meta.env.MODE === 'development') {
@@ -37,7 +41,8 @@ export function handleContentScriptMessage(
   message: unknown,
   _sender?: chrome.runtime.MessageSender,
   sendResponse?: (response: unknown) => void,
-  contextManager: IContextManager = sessionContextManager
+  contextManager: IContextManager = sessionContextManager,
+  renderer: DOMOverlayRenderer = overlayRenderer
 ): boolean {
   if (!message || typeof message !== 'object') {
     return false;
@@ -112,6 +117,37 @@ export function handleContentScriptMessage(
     sendResponse?.(response);
     return false;
   }
+  if (req.type === EXTENSION_MESSAGE_TYPES.RENDER_TRANSLATION_OVERLAY) {
+    try {
+      const renderReq = message as RenderTranslationOverlayRequest;
+      const targetImage = resolveTargetImage(renderReq.targetSelector);
+      const renderResult = renderer.render(renderReq.result, targetImage);
+      sendResponse?.({
+        success: true,
+        imageId: renderResult.imageId,
+        bubbleCount: renderResult.bubbleCount,
+      });
+    } catch (err) {
+      sendResponse?.({
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return true;
+  }
+
+  if (req.type === EXTENSION_MESSAGE_TYPES.CLEAR_ALL_OVERLAYS) {
+    try {
+      renderer.removeAllOverlays();
+      sendResponse?.({ success: true });
+    } catch (err) {
+      sendResponse?.({
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return true;
+  }
 
   return false;
 }
@@ -119,6 +155,12 @@ export function handleContentScriptMessage(
 // Listen for messages from popup or background service worker
 if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    return handleContentScriptMessage(message, sender, sendResponse, sessionContextManager);
+    return handleContentScriptMessage(
+      message,
+      sender,
+      sendResponse,
+      sessionContextManager,
+      overlayRenderer
+    );
   });
 }

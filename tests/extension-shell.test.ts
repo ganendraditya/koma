@@ -73,6 +73,8 @@ describe('KOMA-002: Chrome Manifest V3 Extension Shell', () => {
       expect(EXTENSION_MESSAGE_TYPES.RUN_DIAGNOSTIC).toBe('RUN_DIAGNOSTIC');
       expect(EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE).toBe('TRANSLATE_ACTIVE_PAGE');
       expect(EXTENSION_MESSAGE_TYPES.RESET_CONTEXT).toBe('RESET_CONTEXT');
+      expect(EXTENSION_MESSAGE_TYPES.RENDER_TRANSLATION_OVERLAY).toBe('RENDER_TRANSLATION_OVERLAY');
+      expect(EXTENSION_MESSAGE_TYPES.CLEAR_ALL_OVERLAYS).toBe('CLEAR_ALL_OVERLAYS');
     });
 
     it('handles PING request in background service worker logic', () => {
