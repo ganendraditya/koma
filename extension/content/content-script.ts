@@ -9,12 +9,16 @@ import {
   type DiagnosticReport,
   type PingResponse,
   type CheckPageStatusResponse,
+  type RenderTranslationOverlayRequest,
 } from '@shared';
 import { TranslationOrchestrator } from '@core/orchestrator';
 import { TranslationProvider, TranslationResult } from '@core/contracts';
+import { DOMOverlayRenderer } from '@core/renderer';
+import { resolveTargetImage } from './target-image';
 
 console.log('[Koma] Content script loaded on:', window.location.href);
 
+const overlayRenderer = new DOMOverlayRenderer();
 const adapter = new MangaDexAdapter();
 
 if (import.meta.env.MODE === 'development') {
@@ -142,6 +146,37 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     sendResponse({ success: true });
     return false;
+  }
+  if (message.type === EXTENSION_MESSAGE_TYPES.RENDER_TRANSLATION_OVERLAY) {
+    try {
+      const renderReq = message as RenderTranslationOverlayRequest;
+      const targetImage = resolveTargetImage(renderReq.targetSelector);
+      const renderResult = overlayRenderer.render(renderReq.result, targetImage);
+      sendResponse({
+        success: true,
+        imageId: renderResult.imageId,
+        bubbleCount: renderResult.bubbleCount,
+      });
+    } catch (err) {
+      sendResponse({
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return true;
+  }
+
+  if (message.type === EXTENSION_MESSAGE_TYPES.CLEAR_ALL_OVERLAYS) {
+    try {
+      overlayRenderer.removeAllOverlays();
+      sendResponse({ success: true });
+    } catch (err) {
+      sendResponse({
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return true;
   }
 
   return false;

@@ -1,3 +1,5 @@
+import type { TranslationResult } from '@core/contracts';
+
 /**
  * Standard message types and payloads for Chrome extension inter-process communication.
  */
@@ -8,6 +10,8 @@ export const EXTENSION_MESSAGE_TYPES = {
   RUN_DIAGNOSTIC: 'RUN_DIAGNOSTIC',
   TRANSLATE_ACTIVE_PAGE: 'TRANSLATE_ACTIVE_PAGE',
   TRANSLATION_PROGRESS: 'TRANSLATION_PROGRESS',
+  RENDER_TRANSLATION_OVERLAY: 'RENDER_TRANSLATION_OVERLAY',
+  CLEAR_ALL_OVERLAYS: 'CLEAR_ALL_OVERLAYS',
 } as const;
 
 export type ExtensionMessageType =
@@ -67,5 +71,20 @@ export interface TranslationProgressEvent {
   error?: string;
 }
 
+export interface RenderTranslationOverlayRequest {
+  type: typeof EXTENSION_MESSAGE_TYPES.RENDER_TRANSLATION_OVERLAY;
+  result: TranslationResult;
+  targetSelector: string;
+}
+
+export interface ClearAllOverlaysRequest {
+  type: typeof EXTENSION_MESSAGE_TYPES.CLEAR_ALL_OVERLAYS;
+}
+
 export type ExtensionRequest =
-  PingRequest | CheckPageStatusRequest | RunDiagnosticRequest | TranslateActivePageRequest;
+  | PingRequest
+  | CheckPageStatusRequest
+  | RunDiagnosticRequest
+  | TranslateActivePageRequest
+  | RenderTranslationOverlayRequest
+  | ClearAllOverlaysRequest;

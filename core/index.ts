@@ -9,3 +9,4 @@ export * from './contracts';
 export * from './errors';
 export * from './cache';
 export * from './orchestrator';
+export * from './renderer';
