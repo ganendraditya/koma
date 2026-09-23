@@ -23,10 +23,16 @@ CRITICAL RULES:
 3. TRANSLATION QUALITY:
    - Translate into natural, contextually appropriate ${targetLanguageName} suitable for comics.
    - Preserve conversational tone, slang, character personality, and dialogue rhythm.
-   - Do not add explanations, parenthetical notes, or translator chatter.`;
+   - Do not add explanations, parenthetical notes, or translator chatter.
+
+4. HISTORICAL CONTINUITY:
+   - Any dialogue history or glossary provided in background context represents prior pages only.
+   - Detect, transcribe, and translate ONLY text that visibly appears in the currently provided image.
+   - NEVER create or output bubbles for dialogue from prior pages.`;
 
   if (context) {
-    prompt += '\n\nCONTEXT & CONTINUITY:';
+    prompt +=
+      '\n\nCONTEXT & CONTINUITY (Historical reference from prior pages; do NOT re-output as current bubbles):';
 
     if (context.seriesTitle) {
       prompt += `\n- Series Title: "${context.seriesTitle}"`;
