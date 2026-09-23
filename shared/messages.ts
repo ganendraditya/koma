@@ -10,6 +10,7 @@ export const EXTENSION_MESSAGE_TYPES = {
   RUN_DIAGNOSTIC: 'RUN_DIAGNOSTIC',
   TRANSLATE_ACTIVE_PAGE: 'TRANSLATE_ACTIVE_PAGE',
   TRANSLATION_PROGRESS: 'TRANSLATION_PROGRESS',
+  RESET_CONTEXT: 'RESET_CONTEXT',
   RENDER_TRANSLATION_OVERLAY: 'RENDER_TRANSLATION_OVERLAY',
   CLEAR_ALL_OVERLAYS: 'CLEAR_ALL_OVERLAYS',
 } as const;
@@ -40,6 +41,15 @@ export interface CheckPageStatusResponse {
 
 export interface RunDiagnosticRequest {
   type: typeof EXTENSION_MESSAGE_TYPES.RUN_DIAGNOSTIC;
+}
+
+export interface ResetContextRequest {
+  type: typeof EXTENSION_MESSAGE_TYPES.RESET_CONTEXT;
+}
+
+export interface ResetContextResponse {
+  success: boolean;
+  timestamp: number;
 }
 
 export interface DiagnosticReport {
@@ -85,6 +95,7 @@ export type ExtensionRequest =
   | PingRequest
   | CheckPageStatusRequest
   | RunDiagnosticRequest
+  | ResetContextRequest
   | TranslateActivePageRequest
   | RenderTranslationOverlayRequest
   | ClearAllOverlaysRequest;
