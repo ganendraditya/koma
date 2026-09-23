@@ -9,16 +9,20 @@ import {
   type DiagnosticReport,
   type PingResponse,
   type CheckPageStatusResponse,
+  type ResetContextResponse,
   type RenderTranslationOverlayRequest,
 } from '@shared';
-import { TranslationOrchestrator } from '@core/orchestrator';
-import { TranslationProvider, TranslationResult } from '@core/contracts';
+import { ContextManager, type IContextManager } from '@core/context';
 import { DOMOverlayRenderer } from '@core/renderer';
 import { resolveTargetImage } from './target-image';
 
-console.log('[Koma] Content script loaded on:', window.location.href);
+if (typeof window !== 'undefined') {
+  console.log('[Koma] Content script loaded on:', window.location?.href);
+}
 
-const overlayRenderer = new DOMOverlayRenderer();
+// Session context owner for active tab / content script session
+export const sessionContextManager: IContextManager = new ContextManager();
+export const overlayRenderer: DOMOverlayRenderer = new DOMOverlayRenderer();
 const adapter = new MangaDexAdapter();
 
 if (import.meta.env.MODE === 'development') {
@@ -33,49 +37,32 @@ if (import.meta.env.MODE === 'development') {
   });
 }
 
-// TODO: Replace dummy implementations with actual system components (e.g., real TranslationProvider, Renderer) before production release.
-const dummyProvider: TranslationProvider = {
-  id: 'dummy-provider',
-  name: 'Dummy Provider',
-  capabilities: () => ({ vision: true, ocr: true, translation: true, boundingBoxes: true }),
-  translatePage: async (req) => {
-    await new Promise((r) => setTimeout(r, 1000));
-    return {
-      pageId: 'page-1',
-      imageId: req.image.id,
-      sourceLanguage: 'ja',
-      targetLanguage: req.targetLanguage,
-      bubbles: [],
-    };
-  },
-};
-
-const dummyRenderer = {
-  render: (result: TranslationResult) => {
-    console.log(`[Koma Renderer] Rendered overlay for ${result.imageId}`);
-  },
-};
-
-const orchestrator = new TranslationOrchestrator(dummyProvider, adapter, dummyRenderer);
-
-// Listen for messages from popup or background service worker
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+export function handleContentScriptMessage(
+  message: unknown,
+  _sender?: chrome.runtime.MessageSender,
+  sendResponse?: (response: unknown) => void,
+  contextManager: IContextManager = sessionContextManager,
+  renderer: DOMOverlayRenderer = overlayRenderer
+): boolean {
   if (!message || typeof message !== 'object') {
     return false;
   }
 
-  if (message.type === EXTENSION_MESSAGE_TYPES.CHECK_PAGE_STATUS) {
+  const req = message as { type?: string };
+
+  if (req.type === EXTENSION_MESSAGE_TYPES.CHECK_PAGE_STATUS) {
+    const pageUrl = typeof window !== 'undefined' ? window.location?.href || '' : '';
     const response: CheckPageStatusResponse = {
       active: true,
-      url: window.location.href,
+      url: pageUrl,
       imageCount: adapter.detectMangaImages().length,
-      isSupportedSite: adapter.matches(window.location.href),
+      isSupportedSite: adapter.matches(pageUrl),
     };
-    sendResponse(response);
+    sendResponse?.(response);
     return true;
   }
 
-  if (message.type === EXTENSION_MESSAGE_TYPES.RUN_DIAGNOSTIC) {
+  if (req.type === EXTENSION_MESSAGE_TYPES.RUN_DIAGNOSTIC) {
     const startTime = Date.now();
 
     // Ping background service worker to test content-to-worker communication
@@ -107,16 +94,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const report: DiagnosticReport = {
           success: true,
           timestamp: Date.now(),
-          url: window.location.href,
+          url: typeof window !== 'undefined' ? window.location?.href || '' : '',
           contentScript: {
             active: true,
             detectedImages: adapter.detectMangaImages().length,
-            readyState: document.readyState,
+            readyState: typeof document !== 'undefined' ? document.readyState : 'complete',
           },
           serviceWorker: serviceWorkerStatus,
         };
 
-        sendResponse(report);
+        sendResponse?.(report);
       }
     );
 
@@ -124,41 +111,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE) {
-    orchestrator
-      .translateNext({
-        onProgress: (state) => {
-          chrome.runtime.sendMessage(
-            {
-              type: EXTENSION_MESSAGE_TYPES.TRANSLATION_PROGRESS,
-              imageId: state.imageId,
-              status: state.status,
-              error: state.error?.message,
-            },
-            () => {
-              // Ignore error if popup is closed and no listener exists
-              void chrome.runtime.lastError;
-            }
-          );
-        },
-      })
-      .catch(console.error);
-
-    sendResponse({ success: true });
+  if (req.type === EXTENSION_MESSAGE_TYPES.RESET_CONTEXT) {
+    contextManager.reset();
+    const response: ResetContextResponse = { success: true, timestamp: Date.now() };
+    sendResponse?.(response);
     return false;
   }
-  if (message.type === EXTENSION_MESSAGE_TYPES.RENDER_TRANSLATION_OVERLAY) {
+
+  if (req.type === EXTENSION_MESSAGE_TYPES.RENDER_TRANSLATION_OVERLAY) {
     try {
       const renderReq = message as RenderTranslationOverlayRequest;
       const targetImage = resolveTargetImage(renderReq.targetSelector);
-      const renderResult = overlayRenderer.render(renderReq.result, targetImage);
-      sendResponse({
+      const renderResult = renderer.render(renderReq.result, targetImage);
+      sendResponse?.({
         success: true,
         imageId: renderResult.imageId,
         bubbleCount: renderResult.bubbleCount,
       });
     } catch (err) {
-      sendResponse({
+      sendResponse?.({
         success: false,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -166,12 +137,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === EXTENSION_MESSAGE_TYPES.CLEAR_ALL_OVERLAYS) {
+  if (req.type === EXTENSION_MESSAGE_TYPES.CLEAR_ALL_OVERLAYS) {
     try {
-      overlayRenderer.removeAllOverlays();
-      sendResponse({ success: true });
+      renderer.removeAllOverlays();
+      sendResponse?.({ success: true });
     } catch (err) {
-      sendResponse({
+      sendResponse?.({
         success: false,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -180,4 +151,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   return false;
-});
+}
+
+// Listen for messages from popup or background service worker
+if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    return handleContentScriptMessage(
+      message,
+      sender,
+      sendResponse,
+      sessionContextManager,
+      overlayRenderer
+    );
+  });
+}
