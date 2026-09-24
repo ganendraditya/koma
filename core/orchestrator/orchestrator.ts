@@ -1,5 +1,7 @@
 import { TranslationProvider } from '@core/contracts';
 import { SiteAdapter } from '@adapters';
+import { InvalidProviderResponseError } from '@core/errors';
+import { logPipeline, pipelineFailure } from '@core/diagnostics';
 import {
   ITranslationOrchestrator,
   IRenderer,
@@ -64,7 +66,16 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
   }
 
   public async translateNext(handler?: OrchestratorEventHandler): Promise<boolean> {
-    const images = this.adapter.detectMangaImages();
+    const detectionStart = performance.now();
+    let images;
+    try {
+      images = this.adapter.detectMangaImages();
+    } catch {
+      pipelineFailure('detection');
+      return false;
+    } finally {
+      logPipeline('detection', 'scan', performance.now() - detectionStart);
+    }
     if (!images || images.length === 0) {
       return false;
     }
@@ -91,8 +102,8 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       const state = this.stateMap.get(img.id);
       if (state && state.status === 'idle') {
         // Start process in background without awaiting it to allow concurrency
-        this.processImage(img.id, handler).catch((e) => {
-          console.error('[Koma Orchestrator] Background translation crashed for', img.id, e);
+        this.processImage(img.id, handler, detectionStart).catch(() => {
+          pipelineFailure('provider');
         });
         startedAny = true;
       }
@@ -112,7 +123,8 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
 
   private async processImage(
     imageId: string,
-    handler?: OrchestratorEventHandler
+    handler?: OrchestratorEventHandler,
+    totalStart = performance.now()
   ): Promise<boolean> {
     // Check concurrency limit
     if (this.inFlightCount >= (this.options.concurrencyLimit || 1)) {
@@ -126,10 +138,21 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     }
 
     // Find the original image details from the adapter
-    const images = this.adapter.detectMangaImages();
+    const detectionStart = performance.now();
+    let images;
+    try {
+      images = this.adapter.detectMangaImages();
+    } catch {
+      const err = pipelineFailure('detection');
+      this.updateState(imageId, { status: 'failed', error: err }, handler);
+      handler?.onError?.(imageId, err);
+      return false;
+    } finally {
+      logPipeline('detection', 'scan', performance.now() - detectionStart);
+    }
     const targetImage = images.find((img) => img.id === imageId);
     if (!targetImage) {
-      const err = new Error(`Image ${imageId} no longer detected by adapter`);
+      const err = pipelineFailure('detection');
       this.updateState(imageId, { status: 'failed', error: err }, handler);
       if (handler?.onError) handler.onError(imageId, err);
       return false;
@@ -142,28 +165,36 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     try {
       // Fetch actual image data
       // Since Koma is DOM based, the adapter provides a URL or data URL in targetImage.url or base64Data
-      const result = await this.provider.translatePage({
-        image: targetImage,
-        targetLanguage: this.options.targetLanguage ?? 'id',
-      });
+      let result;
+      try {
+        result = await this.provider.translatePage({
+          image: targetImage,
+          targetLanguage: this.options.targetLanguage ?? 'id',
+        });
+      } catch (error) {
+        throw pipelineFailure(
+          error instanceof InvalidProviderResponseError ? 'normalization' : 'provider'
+        );
+      }
 
       if (this.sessionId !== currentSession) return false;
 
-      this.updateState(imageId, { status: 'completed', result }, handler);
-
-      // Render immediately upon success
+      const renderStart = performance.now();
       try {
         this.renderer.render(result);
-      } catch (renderError) {
-        console.error('[Koma Orchestrator] Rendering failed for', imageId, renderError);
+      } catch {
+        throw pipelineFailure('render');
+      } finally {
+        logPipeline('render', 'duration', performance.now() - renderStart);
       }
+      this.updateState(imageId, { status: 'completed', result }, handler);
 
       try {
         if (handler?.onComplete) {
           handler.onComplete(imageId, result);
         }
-      } catch (e) {
-        console.error('[Koma Orchestrator] onComplete callback threw:', e);
+      } catch {
+        console.error('[Koma Orchestrator] onComplete callback threw');
       }
 
       // Attempt to pull next item from queue if any are left
@@ -171,20 +202,21 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       return true;
     } catch (error) {
       if (this.sessionId !== currentSession) return false;
-      const err = error instanceof Error ? error : new Error(String(error));
+      const err = error instanceof Error ? error : pipelineFailure('provider');
       this.updateState(imageId, { status: 'failed', error: err }, handler);
 
       try {
         if (handler?.onError) {
           handler.onError(imageId, err);
         }
-      } catch (e) {
-        console.error('[Koma Orchestrator] onError callback threw:', e);
+      } catch {
+        console.error('[Koma Orchestrator] onError callback threw');
       }
 
       this.pumpQueue(handler);
       return false;
     } finally {
+      logPipeline('total', 'translation', performance.now() - totalStart);
       if (this.sessionId === currentSession) {
         this.inFlightCount = Math.max(0, this.inFlightCount - 1);
       }

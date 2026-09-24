@@ -82,6 +82,7 @@ cp .env.example .env
 
 The first supported reader is MangaDex. See [MangaDex adapter](docs/MANGADEX_ADAPTER.md)
 for supported routes, lazy-loading behavior, and popup/console verification steps.
+Use the [Sprint 1 smoke-test checklist](docs/SMOKE_TEST.md) to record Chrome regression results and pipeline timings.
 
 For complete technical specifications, refer to [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/ADR-001-translation-contracts.md`](docs/ADR-001-translation-contracts.md).
 
