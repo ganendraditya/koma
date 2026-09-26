@@ -117,6 +117,7 @@ export function handleContentScriptMessage(
     sendResponse?.(response);
     return false;
   }
+
   if (req.type === EXTENSION_MESSAGE_TYPES.RENDER_TRANSLATION_OVERLAY) {
     try {
       const renderReq = message as RenderTranslationOverlayRequest;

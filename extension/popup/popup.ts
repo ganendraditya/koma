@@ -65,6 +65,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // Listen for translation progress updates
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message.type === EXTENSION_MESSAGE_TYPES.TRANSLATION_PROGRESS) {
+      if (statusEl) {
+        statusEl.textContent = `Image ${message.imageId}: ${message.status}`;
+        if (message.error) {
+          statusEl.textContent += ` (Error: ${message.error})`;
+          statusEl.style.color = 'var(--danger)';
+        } else if (message.status === 'completed') {
+          statusEl.style.color = 'var(--success)';
+        } else {
+          statusEl.style.color = 'var(--text-primary)';
+        }
+      }
+    }
+  });
+
   function updateKeyIndicator(hasKey: boolean) {
     if (!apiIndicatorEl) return;
     if (hasKey) {

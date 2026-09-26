@@ -9,6 +9,7 @@ export const EXTENSION_MESSAGE_TYPES = {
   CHECK_PAGE_STATUS: 'CHECK_PAGE_STATUS',
   RUN_DIAGNOSTIC: 'RUN_DIAGNOSTIC',
   TRANSLATE_ACTIVE_PAGE: 'TRANSLATE_ACTIVE_PAGE',
+  TRANSLATION_PROGRESS: 'TRANSLATION_PROGRESS',
   RESET_CONTEXT: 'RESET_CONTEXT',
   RENDER_TRANSLATION_OVERLAY: 'RENDER_TRANSLATION_OVERLAY',
   CLEAR_ALL_OVERLAYS: 'CLEAR_ALL_OVERLAYS',
@@ -69,6 +70,17 @@ export interface DiagnosticReport {
   };
 }
 
+export interface TranslateActivePageRequest {
+  type: typeof EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE;
+}
+
+export interface TranslationProgressEvent {
+  type: typeof EXTENSION_MESSAGE_TYPES.TRANSLATION_PROGRESS;
+  imageId: string;
+  status: 'idle' | 'translating' | 'completed' | 'failed';
+  error?: string;
+}
+
 export interface RenderTranslationOverlayRequest {
   type: typeof EXTENSION_MESSAGE_TYPES.RENDER_TRANSLATION_OVERLAY;
   result: TranslationResult;
@@ -84,5 +96,6 @@ export type ExtensionRequest =
   | CheckPageStatusRequest
   | RunDiagnosticRequest
   | ResetContextRequest
+  | TranslateActivePageRequest
   | RenderTranslationOverlayRequest
   | ClearAllOverlaysRequest;
