@@ -6,6 +6,7 @@ import {
 } from '../contracts';
 import { TranslationCache } from './types';
 import { generateCacheKey } from './key';
+import { logPipeline } from '../diagnostics';
 
 function rebindResultToRequest(
   result: TranslationResult,
@@ -55,6 +56,7 @@ export class CachedTranslationProvider implements TranslationProvider {
     });
 
     if (request.options?.bypassCache) {
+      logPipeline('cache', 'bypass');
       const result = await this.provider.translatePage(request);
       try {
         await this.cache.set(cacheKey, result);
@@ -66,17 +68,21 @@ export class CachedTranslationProvider implements TranslationProvider {
 
     const ongoing = this.inFlight.get(cacheKey);
     if (ongoing) {
+      logPipeline('cache', 'in-flight');
       const result = await ongoing;
       return rebindResultToRequest(result, request);
     }
 
     const cached = await this.cache.get(cacheKey);
     if (cached) {
+      logPipeline('cache', 'hit');
       return rebindResultToRequest(cached, request);
     }
+    logPipeline('cache', 'miss');
 
     const ongoingAfterCache = this.inFlight.get(cacheKey);
     if (ongoingAfterCache) {
+      logPipeline('cache', 'in-flight');
       const result = await ongoingAfterCache;
       return rebindResultToRequest(result, request);
     }

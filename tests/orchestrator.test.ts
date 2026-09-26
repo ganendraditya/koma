@@ -119,7 +119,10 @@ describe('TranslationOrchestrator', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(orchestrator.getState().get('img-1')?.status).toBe('failed');
-    expect(onErrorHandler).toHaveBeenCalledWith('img-1', error);
+    expect(onErrorHandler).toHaveBeenCalledWith(
+      'img-1',
+      expect.objectContaining({ message: 'Translation failed at provider stage' })
+    );
 
     // Mock success for retry
     const result: TranslationResult = {

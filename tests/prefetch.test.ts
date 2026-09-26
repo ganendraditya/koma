@@ -333,7 +333,10 @@ describe('Look-Ahead Translation Prefetch (KOMA-011)', () => {
 
       // img-1 failed, onError called
       expect(orchestrator.getState().get('img-1')?.status).toBe('failed');
-      expect(onError).toHaveBeenCalledWith('img-1', networkError);
+      expect(onError).toHaveBeenCalledWith(
+        'img-1',
+        expect.objectContaining({ message: 'Translation failed at provider stage' })
+      );
 
       // Queue continued and img-2 completed successfully!
       expect(orchestrator.getState().get('img-2')?.status).toBe('completed');

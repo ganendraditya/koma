@@ -14,6 +14,7 @@ import {
 import { GeminiRequestPayload, GeminiResponsePayload, DEFAULT_GEMINI_MODEL } from './types';
 import { buildGeminiSystemPrompt, getGeminiResponseSchema } from './prompt';
 import { normalizeGeminiResponse } from './normalizer';
+import { logPipeline } from '@core/diagnostics';
 
 export interface GeminiProviderOptions {
   apiKey: string;
@@ -62,7 +63,6 @@ export class GeminiTranslationProvider implements TranslationProvider {
     }
 
     const { base64Data, mimeType } = await this.extractImageData(request);
-    const startTime = Date.now();
 
     const systemPrompt = buildGeminiSystemPrompt(request.targetLanguage, request.context);
 
@@ -100,6 +100,7 @@ export class GeminiTranslationProvider implements TranslationProvider {
     const activeModelName = request.options?.modelName || this.modelName;
     const endpoint = `${this.baseUrl}/models/${encodeURIComponent(activeModelName)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
 
+    const requestStart = performance.now();
     let response: Response;
     try {
       response = await this.fetch(endpoint, {
@@ -111,8 +112,6 @@ export class GeminiTranslationProvider implements TranslationProvider {
         signal: controller.signal,
       });
     } catch (err) {
-      clearTimeout(timeoutId);
-
       if (err instanceof Error && err.name === 'AbortError') {
         throw new ProviderTimeoutError(
           `Gemini request timed out after ${timeoutMs}ms`,
@@ -128,46 +127,45 @@ export class GeminiTranslationProvider implements TranslationProvider {
       );
     } finally {
       clearTimeout(timeoutId);
+      logPipeline('provider', 'request', performance.now() - requestStart);
     }
 
     if (!response.ok) {
       await this.handleHttpError(response);
     }
 
-    let data: GeminiResponsePayload;
+    const normalizationStart = performance.now();
     try {
-      data = (await response.json()) as GeminiResponsePayload;
-    } catch (err) {
-      throw new InvalidProviderResponseError(
-        `Failed to parse Gemini response body as JSON: ${err instanceof Error ? err.message : String(err)}`,
-        this.id
-      );
+      let data: GeminiResponsePayload;
+      try {
+        data = (await response.json()) as GeminiResponsePayload;
+      } catch {
+        throw new InvalidProviderResponseError(
+          'Failed to parse Gemini response body as JSON',
+          this.id
+        );
+      }
+
+      const candidate = data.candidates?.[0];
+      const candidateText = candidate?.content?.parts?.[0]?.text;
+
+      if (!candidateText) {
+        throw new InvalidProviderResponseError('Gemini returned an empty text candidate', this.id);
+      }
+
+      return normalizeGeminiResponse({
+        rawText: candidateText,
+        imageId: request.image.id,
+        pageId: `page_${request.image.pageIndex}`,
+        sourceLanguage: request.sourceLanguage || 'ja',
+        targetLanguage: request.targetLanguage,
+        durationMs: performance.now() - requestStart,
+        modelId: activeModelName,
+        providerId: this.id,
+      });
+    } finally {
+      logPipeline('normalization', 'duration', performance.now() - normalizationStart);
     }
-
-    const candidate = data.candidates?.[0];
-    const candidateText = candidate?.content?.parts?.[0]?.text;
-
-    if (!candidateText) {
-      const finishReason = candidate?.finishReason || 'UNKNOWN';
-      throw new InvalidProviderResponseError(
-        `Gemini returned empty text candidate (finishReason: ${finishReason})`,
-        this.id,
-        data
-      );
-    }
-
-    const durationMs = Date.now() - startTime;
-
-    return normalizeGeminiResponse({
-      rawText: candidateText,
-      imageId: request.image.id,
-      pageId: `page_${request.image.pageIndex}`,
-      sourceLanguage: request.sourceLanguage || 'ja',
-      targetLanguage: request.targetLanguage,
-      durationMs,
-      modelId: activeModelName,
-      providerId: this.id,
-    });
   }
 
   private async extractImageData(
