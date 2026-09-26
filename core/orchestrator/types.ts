@@ -44,7 +44,7 @@ export interface OrchestratorEventHandler {
 export interface ITranslationOrchestrator {
   /**
    * Triggers translation for the next untranslated image(s) on the page.
-   * Prioritizes visible content and enqueues upcoming images if prefetching is enabled.
+   * Prioritizes visible content and enqueues upcoming images if prefetching is enabled. Idempotent per image.
    */
   translateNext(handler?: OrchestratorEventHandler): Promise<boolean>;
 
