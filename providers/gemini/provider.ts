@@ -112,8 +112,6 @@ export class GeminiTranslationProvider implements TranslationProvider {
         signal: controller.signal,
       });
     } catch (err) {
-      clearTimeout(timeoutId);
-
       if (err instanceof Error && err.name === 'AbortError') {
         throw new ProviderTimeoutError(
           `Gemini request timed out after ${timeoutMs}ms`,

@@ -6,7 +6,12 @@ import { GeminiTranslationProvider } from '../providers/gemini/provider';
 import type { SiteAdapter } from '../adapters';
 import type { TranslationProvider, TranslationResult, TranslationRequest } from '../core/contracts';
 import type { IRenderer } from '../core/orchestrator/types';
-import { InvalidProviderResponseError } from '../core/errors';
+import {
+  InvalidProviderResponseError,
+  ProviderAuthError,
+  ProviderRateLimitError,
+  ProviderTimeoutError,
+} from '../core/errors';
 import { logPipeline } from '../core/diagnostics';
 
 const image = {
@@ -94,11 +99,13 @@ describe('development pipeline diagnostics', () => {
     await vi.waitFor(() => expect(onError).toHaveBeenCalled());
     expect(onError.mock.calls[0][1].message).toBe('Translation failed at provider stage');
     expect(debug.mock.calls.flat().join(' ')).toContain('detection: scan');
-    expect(debug.mock.calls.flat().join(' ')).toContain('total: translation');
+    expect(debug.mock.calls.flat().join(' ')).not.toContain('total: translation');
     expect(debug.mock.calls.flat().join(' ')).not.toContain('secret-test-key');
   });
 
   it('identifies normalization and rendering errors and permits a render retry', async () => {
+    vi.stubEnv('MODE', 'development');
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
     const adapter: SiteAdapter = {
       name: 'test',
       matches: () => true,
@@ -124,10 +131,114 @@ describe('development pipeline diagnostics', () => {
     await orchestrator.translateNext({ onError });
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
     expect(onError.mock.calls[0][1].message).toBe('Translation failed at normalization stage');
+    expect(onError.mock.calls[0][1]).toBeInstanceOf(InvalidProviderResponseError);
+    expect(debug.mock.calls.flat().join(' ')).not.toContain('raw response');
     await orchestrator.retry(image.id, { onError });
     expect(onError.mock.calls[1][1].message).toBe('Translation failed at render stage');
+    expect(debug.mock.calls.flat().join(' ')).not.toContain('render: duration');
     expect(orchestrator.getState().get(image.id)?.status).toBe('failed');
     expect(await orchestrator.retry(image.id)).toBe(true);
     expect(orchestrator.getState().get(image.id)?.status).toBe('completed');
+    expect(debug.mock.calls.flat().join(' ')).toContain('total: translation');
+  });
+
+  it('keeps actionable provider error types and retry metadata without forwarding sensitive messages', async () => {
+    const adapter: SiteAdapter = {
+      name: 'test',
+      matches: () => true,
+      detectMangaImages: () => [image],
+      observeMangaImages: () => () => {},
+    };
+    const errors = [
+      new ProviderAuthError('secret-key', 'gemini'),
+      new ProviderRateLimitError('secret-key', 'gemini', 15),
+      new ProviderTimeoutError('secret-key', 'gemini', 5000),
+    ];
+    const provider: TranslationProvider = {
+      id: 'gemini',
+      name: 'gemini',
+      capabilities: () => ({ vision: true, ocr: true, translation: true, boundingBoxes: true }),
+      translatePage: vi.fn().mockImplementation(() => Promise.reject(errors.shift())),
+    };
+    const orchestrator = new TranslationOrchestrator(provider, adapter, { render: vi.fn() });
+    const onError = vi.fn();
+    await orchestrator.translateNext({ onError });
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    await orchestrator.retry(image.id, { onError });
+    await orchestrator.retry(image.id, { onError });
+
+    expect(onError.mock.calls[0][1]).toBeInstanceOf(ProviderAuthError);
+    expect(onError.mock.calls[1][1]).toBeInstanceOf(ProviderRateLimitError);
+    expect(onError.mock.calls[1][1].retryAfterSeconds).toBe(15);
+    expect(onError.mock.calls[2][1]).toBeInstanceOf(ProviderTimeoutError);
+    expect(onError.mock.calls[2][1].timeoutMs).toBe(5000);
+    expect(
+      onError.mock.calls
+        .flat()
+        .map((value) => String(value))
+        .join(' ')
+    ).not.toContain('secret-key');
+  });
+
+  it('logs a failed detection without a successful scan or total translation duration', async () => {
+    vi.stubEnv('MODE', 'development');
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const adapter: SiteAdapter = {
+      name: 'test',
+      matches: () => true,
+      detectMangaImages: () => {
+        throw new Error('reader failed');
+      },
+      observeMangaImages: () => () => {},
+    };
+    const provider: TranslationProvider = {
+      id: 'test',
+      name: 'test',
+      capabilities: () => ({ vision: true, ocr: true, translation: true, boundingBoxes: true }),
+      translatePage: vi.fn(),
+    };
+    const orchestrator = new TranslationOrchestrator(provider, adapter, { render: vi.fn() });
+
+    expect(await orchestrator.translateNext()).toBe(false);
+    expect(debug).toHaveBeenCalledWith('[Koma pipeline] detection: failed');
+    expect(debug.mock.calls.flat().join(' ')).not.toContain('detection: scan');
+    expect(debug.mock.calls.flat().join(' ')).not.toContain('total: translation');
+    expect(provider.translatePage).not.toHaveBeenCalled();
+  });
+
+  it('reports a second detection failure without starting a translation timer', async () => {
+    vi.stubEnv('MODE', 'development');
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const adapter: SiteAdapter = {
+      name: 'test',
+      matches: () => true,
+      detectMangaImages: vi
+        .fn()
+        .mockReturnValueOnce([image])
+        .mockImplementation(() => {
+          throw new Error('reader changed');
+        }),
+      observeMangaImages: () => () => {},
+    };
+    const provider: TranslationProvider = {
+      id: 'test',
+      name: 'test',
+      capabilities: () => ({ vision: true, ocr: true, translation: true, boundingBoxes: true }),
+      translatePage: vi.fn(),
+    };
+    const orchestrator = new TranslationOrchestrator(provider, adapter, { render: vi.fn() });
+    const onError = vi.fn();
+    await orchestrator.translateNext({ onError });
+
+    expect(orchestrator.getState().get(image.id)?.status).toBe('failed');
+    expect(onError.mock.calls[0][1].message).toBe('Translation failed at detection stage');
+    expect(
+      debug.mock.calls
+        .flat()
+        .join(' ')
+        .match(/detection: scan/g)
+    ).toHaveLength(1);
+    expect(debug.mock.calls.flat().join(' ')).not.toContain('total: translation');
+    expect(provider.translatePage).not.toHaveBeenCalled();
   });
 });

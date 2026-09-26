@@ -57,8 +57,8 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       // Fire and forget callbacks
       try {
         handler.onProgress(updated);
-      } catch (e) {
-        console.error('[Koma Orchestrator] onProgress callback threw:', e);
+      } catch {
+        console.error('[Koma Orchestrator] onProgress callback threw');
       }
     }
 
@@ -70,11 +70,10 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     let images;
     try {
       images = this.adapter.detectMangaImages();
+      logPipeline('detection', 'scan', performance.now() - detectionStart);
     } catch {
       pipelineFailure('detection');
       return false;
-    } finally {
-      logPipeline('detection', 'scan', performance.now() - detectionStart);
     }
     if (!images || images.length === 0) {
       return false;
@@ -102,8 +101,8 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       const state = this.stateMap.get(img.id);
       if (state && state.status === 'idle') {
         // Start process in background without awaiting it to allow concurrency
-        this.processImage(img.id, handler, detectionStart).catch(() => {
-          pipelineFailure('provider');
+        this.processImage(img.id, handler).catch(() => {
+          pipelineFailure('orchestration');
         });
         startedAny = true;
       }
@@ -123,8 +122,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
 
   private async processImage(
     imageId: string,
-    handler?: OrchestratorEventHandler,
-    totalStart = performance.now()
+    handler?: OrchestratorEventHandler
   ): Promise<boolean> {
     // Check concurrency limit
     if (this.inFlightCount >= (this.options.concurrencyLimit || 1)) {
@@ -142,13 +140,12 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     let images;
     try {
       images = this.adapter.detectMangaImages();
+      logPipeline('detection', 'scan', performance.now() - detectionStart);
     } catch {
       const err = pipelineFailure('detection');
       this.updateState(imageId, { status: 'failed', error: err }, handler);
       handler?.onError?.(imageId, err);
       return false;
-    } finally {
-      logPipeline('detection', 'scan', performance.now() - detectionStart);
     }
     const targetImage = images.find((img) => img.id === imageId);
     if (!targetImage) {
@@ -161,6 +158,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     const currentSession = this.sessionId;
     this.inFlightCount++;
     this.updateState(imageId, { status: 'translating', error: undefined }, handler);
+    const totalStart = performance.now();
 
     try {
       // Fetch actual image data
@@ -173,7 +171,8 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
         });
       } catch (error) {
         throw pipelineFailure(
-          error instanceof InvalidProviderResponseError ? 'normalization' : 'provider'
+          error instanceof InvalidProviderResponseError ? 'normalization' : 'provider',
+          error
         );
       }
 
@@ -182,12 +181,12 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       const renderStart = performance.now();
       try {
         this.renderer.render(result);
+        logPipeline('render', 'duration', performance.now() - renderStart);
       } catch {
         throw pipelineFailure('render');
-      } finally {
-        logPipeline('render', 'duration', performance.now() - renderStart);
       }
       this.updateState(imageId, { status: 'completed', result }, handler);
+      logPipeline('total', 'translation', performance.now() - totalStart);
 
       try {
         if (handler?.onComplete) {
@@ -216,7 +215,6 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       this.pumpQueue(handler);
       return false;
     } finally {
-      logPipeline('total', 'translation', performance.now() - totalStart);
       if (this.sessionId === currentSession) {
         this.inFlightCount = Math.max(0, this.inFlightCount - 1);
       }
