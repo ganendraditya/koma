@@ -1,4 +1,5 @@
-import { TranslationProvider } from '@core/contracts';
+import { MangaImage, TranslationProvider, TranslationResult } from '@core/contracts';
+import { generateCacheKey, TranslationCache } from '@core/cache';
 import { SiteAdapter } from '@adapters';
 import { InvalidProviderResponseError } from '@core/errors';
 import { logPipeline, pipelineFailure } from '@core/diagnostics';
@@ -9,16 +10,25 @@ import {
   ImageTranslationState,
   OrchestratorEventHandler,
 } from './types';
+import { PrefetchQueue, PREFETCH_PRIORITY, QueueItem } from './prefetch-queue';
+import {
+  defaultResolveImagePosition,
+  findNearestImageToViewport,
+  getDefaultViewport,
+} from './viewport';
 
 export class TranslationOrchestrator implements ITranslationOrchestrator {
   private readonly provider: TranslationProvider;
   private readonly adapter: SiteAdapter;
   private readonly renderer: IRenderer;
   private readonly options: OrchestratorOptions;
+  private readonly queue: PrefetchQueue = new PrefetchQueue();
 
   private stateMap: Map<string, ImageTranslationState> = new Map();
   private inFlightCount = 0;
   private sessionId = 0;
+  private prefetchEnabled = true;
+  private translationEnabled = true;
 
   constructor(
     provider: TranslationProvider,
@@ -31,7 +41,14 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     this.renderer = renderer;
     this.options = {
       concurrencyLimit: options.concurrencyLimit ?? 1,
+      targetLanguage: options.targetLanguage ?? 'id',
+      lookAheadCount: options.lookAheadCount ?? 2,
+      prefetchEnabled: options.prefetchEnabled ?? true,
+      cache: options.cache,
+      positionResolver: options.positionResolver,
+      viewportProvider: options.viewportProvider,
     };
+    this.prefetchEnabled = this.options.prefetchEnabled ?? true;
   }
 
   public getState(): Map<string, ImageTranslationState> {
@@ -41,20 +58,67 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
   public reset(): void {
     this.sessionId++;
     this.stateMap.clear();
+    this.queue.clear();
     this.inFlightCount = 0;
+  }
+
+  public setPrefetchEnabled(enabled: boolean): void {
+    this.prefetchEnabled = enabled;
+    if (!enabled) {
+      this.queue.removePrefetchTasks();
+    } else if (this.translationEnabled) {
+      this.prefetchUpcoming().catch(() => {});
+    }
+  }
+
+  public isPrefetchEnabled(): boolean {
+    return this.prefetchEnabled;
+  }
+
+  public setTranslationEnabled(enabled: boolean): void {
+    this.translationEnabled = enabled;
+    if (!enabled) {
+      this.queue.removePrefetchTasks();
+    }
+  }
+
+  public isTranslationEnabled(): boolean {
+    return this.translationEnabled;
+  }
+
+  public getQueueSize(): number {
+    return this.queue.size;
+  }
+
+  public getQueuedImageIds(): string[] {
+    return this.queue.getQueuedImageIds();
+  }
+
+  public getNearestImageToViewport(images?: MangaImage[]): MangaImage | null {
+    const list = images ?? this.adapter.detectMangaImages();
+    if (!list || list.length === 0) return null;
+
+    const viewport = this.options.viewportProvider
+      ? this.options.viewportProvider()
+      : getDefaultViewport();
+
+    const resolvePos = this.options.positionResolver
+      ? this.options.positionResolver
+      : (img: MangaImage) => defaultResolveImagePosition(img, this.adapter);
+
+    return findNearestImageToViewport(list, resolvePos, viewport);
   }
 
   private updateState(
     imageId: string,
     partial: Partial<ImageTranslationState>,
     handler?: OrchestratorEventHandler
-  ) {
+  ): ImageTranslationState {
     const existing = this.stateMap.get(imageId) || { imageId, status: 'idle' };
     const updated: ImageTranslationState = { ...existing, ...partial };
     this.stateMap.set(imageId, updated);
 
     if (handler?.onProgress) {
-      // Fire and forget callbacks
       try {
         handler.onProgress(updated);
       } catch {
@@ -65,7 +129,42 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     return updated;
   }
 
+  private getCacheInstance(): TranslationCache | undefined {
+    if (this.options.cache) {
+      return this.options.cache;
+    }
+    if ('cache' in this.provider && (this.provider as { cache?: TranslationCache }).cache) {
+      return (this.provider as { cache: TranslationCache }).cache;
+    }
+    return undefined;
+  }
+
+  private async checkCache(image: MangaImage): Promise<TranslationResult | null> {
+    const cache = this.getCacheInstance();
+    if (!cache) return null;
+
+    const key = generateCacheKey({
+      image,
+      targetLanguage: this.options.targetLanguage ?? 'id',
+      providerId: this.provider.id,
+      modelId: this.provider.modelName,
+    });
+
+    try {
+      const cached = await cache.get(key);
+      logPipeline('cache', cached ? 'hit' : 'miss');
+      return cached;
+    } catch {
+      logPipeline('cache', 'miss');
+      return null;
+    }
+  }
+
   public async translateNext(handler?: OrchestratorEventHandler): Promise<boolean> {
+    if (!this.translationEnabled) {
+      return false;
+    }
+
     const detectionStart = performance.now();
     let images;
     try {
@@ -79,7 +178,6 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       return false;
     }
 
-    // Initialize state for newly discovered images
     let discoveredNew = false;
     for (const img of images) {
       if (!this.stateMap.has(img.id)) {
@@ -89,80 +187,219 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     }
 
     const sortedImages = [...images].sort((a, b) => a.pageIndex - b.pageIndex);
-    const limit = this.options.concurrencyLimit || 1;
-    let startedAny = false;
+    const nearestImage = this.getNearestImageToViewport(sortedImages) || sortedImages[0];
+    const nearestIndex = sortedImages.findIndex((img) => img.id === nearestImage.id);
 
-    // Fill up the concurrency slots
-    for (const img of sortedImages) {
-      if (this.inFlightCount >= limit) {
-        break; // Concurrency saturated
-      }
-
-      const state = this.stateMap.get(img.id);
+    // Find the next untranslated image starting at the visible image
+    let targetImage: MangaImage | undefined;
+    for (let i = 0; i < sortedImages.length; i++) {
+      const idx = (nearestIndex + i) % sortedImages.length;
+      const candidate = sortedImages[idx];
+      const state = this.stateMap.get(candidate.id);
       if (state && state.status === 'idle') {
-        // Start process in background without awaiting it to allow concurrency
-        this.processImage(img.id, handler).catch(() => {
-          pipelineFailure('orchestration');
-        });
-        startedAny = true;
+        targetImage = candidate;
+        break;
       }
     }
 
-    return startedAny || discoveredNew;
+    let queuedAny = false;
+
+    if (targetImage) {
+      // Check cache before queuing provider work
+      const cached = await this.checkCache(targetImage);
+      if (cached) {
+        this.updateState(targetImage.id, { status: 'completed', result: cached }, handler);
+        try {
+          this.renderer.render(cached);
+        } catch (renderError) {
+          console.error('[Koma Orchestrator] Rendering cached result failed:', renderError);
+        }
+        if (handler?.onComplete) {
+          handler.onComplete(targetImage.id, cached);
+        }
+      } else {
+        // Enqueue user-triggered translation with highest priority (0)
+        this.queue.enqueue({
+          imageId: targetImage.id,
+          priority: PREFETCH_PRIORITY.VISIBLE,
+          source: 'user',
+          handler,
+        });
+        queuedAny = true;
+      }
+    }
+
+    // Look-ahead prefetch upcoming images
+    if (this.prefetchEnabled && this.translationEnabled) {
+      await this.prefetchUpcomingImages(sortedImages, targetImage ?? nearestImage, handler);
+    }
+
+    this.pumpQueue();
+    return queuedAny || discoveredNew;
+  }
+
+  public async translateVisible(handler?: OrchestratorEventHandler): Promise<boolean> {
+    return this.translateNext(handler);
+  }
+
+  public async prefetchUpcoming(handler?: OrchestratorEventHandler): Promise<string[]> {
+    if (!this.prefetchEnabled || !this.translationEnabled) {
+      return [];
+    }
+
+    const images = this.adapter.detectMangaImages();
+    if (!images || images.length === 0) {
+      return [];
+    }
+
+    for (const img of images) {
+      if (!this.stateMap.has(img.id)) {
+        this.updateState(img.id, { status: 'idle' }, handler);
+      }
+    }
+
+    const sortedImages = [...images].sort((a, b) => a.pageIndex - b.pageIndex);
+    const nearestImage = this.getNearestImageToViewport(sortedImages) || sortedImages[0];
+
+    const queued = await this.prefetchUpcomingImages(sortedImages, nearestImage, handler);
+    this.pumpQueue();
+    return queued;
+  }
+
+  private async prefetchUpcomingImages(
+    sortedImages: MangaImage[],
+    referenceImage: MangaImage,
+    handler?: OrchestratorEventHandler
+  ): Promise<string[]> {
+    if (!this.prefetchEnabled || !this.translationEnabled) {
+      return [];
+    }
+
+    const refIndex = sortedImages.findIndex((img) => img.id === referenceImage.id);
+    if (refIndex < 0) return [];
+
+    const lookAheadCount = this.options.lookAheadCount ?? 2;
+    const queuedIds: string[] = [];
+
+    for (let offset = 1; offset <= lookAheadCount; offset++) {
+      const upcomingIndex = refIndex + offset;
+      if (upcomingIndex >= sortedImages.length) break;
+
+      const upcomingImg = sortedImages[upcomingIndex];
+      const state = this.stateMap.get(upcomingImg.id);
+
+      if (state && (state.status === 'translating' || state.status === 'completed')) {
+        continue;
+      }
+
+      // Check cache before queuing provider work
+      const cached = await this.checkCache(upcomingImg);
+      if (cached) {
+        this.updateState(upcomingImg.id, { status: 'completed', result: cached }, handler);
+        try {
+          this.renderer.render(cached);
+        } catch (renderError) {
+          console.error(
+            '[Koma Orchestrator] Rendering cached prefetch result failed:',
+            renderError
+          );
+        }
+        if (handler?.onComplete) {
+          try {
+            handler.onComplete(upcomingImg.id, cached);
+          } catch (e) {
+            console.error('[Koma Orchestrator] onComplete callback threw:', e);
+          }
+        }
+        continue;
+      }
+
+      // Look-ahead priorities: 1 for next image, 2 for next-next image
+      const priority =
+        offset === 1
+          ? PREFETCH_PRIORITY.NEXT
+          : offset === 2
+            ? PREFETCH_PRIORITY.NEXT_NEXT
+            : PREFETCH_PRIORITY.BACKGROUND;
+
+      this.queue.enqueue({
+        imageId: upcomingImg.id,
+        priority,
+        source: 'prefetch',
+        handler,
+      });
+      queuedIds.push(upcomingImg.id);
+    }
+
+    return queuedIds;
   }
 
   public async retry(imageId: string, handler?: OrchestratorEventHandler): Promise<boolean> {
     const state = this.stateMap.get(imageId);
     if (!state || state.status !== 'failed') {
-      return false; // Cannot retry if it doesn't exist or isn't failed
+      return false;
     }
 
-    return await this.processImage(imageId, handler);
+    // User-requested retry gets high priority
+    this.queue.enqueue({
+      imageId,
+      priority: PREFETCH_PRIORITY.VISIBLE,
+      source: 'user',
+      handler,
+    });
+
+    this.pumpQueue();
+    return true;
   }
 
-  private async processImage(
-    imageId: string,
-    handler?: OrchestratorEventHandler
-  ): Promise<boolean> {
-    // Check concurrency limit
-    if (this.inFlightCount >= (this.options.concurrencyLimit || 1)) {
-      // TODO: Implement queuing logic to buffer translation requests when the concurrency limit is reached instead of dropping them silently.
-      return false;
-    }
+  private pumpQueue(): void {
+    const limit = this.options.concurrencyLimit || 1;
 
-    const state = this.stateMap.get(imageId);
-    if (!state || state.status === 'translating' || state.status === 'completed') {
-      return false; // Prevent duplicate work
-    }
+    while (this.inFlightCount < limit && this.queue.size > 0) {
+      const peekTask = this.queue.peek();
+      if (!peekTask) break;
 
-    // Find the original image details from the adapter
-    const detectionStart = performance.now();
-    let images;
-    try {
-      images = this.adapter.detectMangaImages();
-      logPipeline('detection', 'scan', performance.now() - detectionStart);
-    } catch {
-      const err = pipelineFailure('detection');
-      this.updateState(imageId, { status: 'failed', error: err }, handler);
-      handler?.onError?.(imageId, err);
-      return false;
-    }
-    const targetImage = images.find((img) => img.id === imageId);
-    if (!targetImage) {
-      const err = pipelineFailure('detection');
-      this.updateState(imageId, { status: 'failed', error: err }, handler);
-      if (handler?.onError) handler.onError(imageId, err);
-      return false;
-    }
+      if (peekTask.source === 'prefetch' && (!this.prefetchEnabled || !this.translationEnabled)) {
+        this.queue.dequeue();
+        continue;
+      }
 
+      const task = this.queue.dequeue();
+      if (!task) break;
+
+      const state = this.stateMap.get(task.imageId);
+      if (state && (state.status === 'completed' || state.status === 'translating')) {
+        continue;
+      }
+
+      this.inFlightCount++;
+      this.executeTask(task).catch(() => {
+        pipelineFailure('orchestration');
+      });
+    }
+  }
+
+  private async executeTask(task: QueueItem): Promise<boolean> {
     const currentSession = this.sessionId;
-    this.inFlightCount++;
+    const { imageId, handler } = task;
+
     this.updateState(imageId, { status: 'translating', error: undefined }, handler);
-    const totalStart = performance.now();
 
     try {
-      // Fetch actual image data
-      // Since Koma is DOM based, the adapter provides a URL or data URL in targetImage.url or base64Data
+      const detectionStart = performance.now();
+      let images;
+      try {
+        images = this.adapter.detectMangaImages();
+        logPipeline('detection', 'scan', performance.now() - detectionStart);
+      } catch {
+        throw pipelineFailure('detection');
+      }
+      const targetImage = images.find((img) => img.id === imageId);
+      if (!targetImage) {
+        throw pipelineFailure('detection');
+      }
+
+      const totalStart = performance.now();
       let result;
       try {
         result = await this.provider.translatePage({
@@ -196,8 +433,15 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
         console.error('[Koma Orchestrator] onComplete callback threw');
       }
 
-      // Attempt to pull next item from queue if any are left
-      this.pumpQueue(handler);
+      if (this.prefetchEnabled && this.translationEnabled) {
+        const sorted = [...images].sort((a, b) => a.pageIndex - b.pageIndex);
+        try {
+          await this.prefetchUpcomingImages(sorted, targetImage, handler);
+        } catch {
+          pipelineFailure('orchestration');
+        }
+      }
+
       return true;
     } catch (error) {
       if (this.sessionId !== currentSession) return false;
@@ -212,27 +456,12 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
         console.error('[Koma Orchestrator] onError callback threw');
       }
 
-      this.pumpQueue(handler);
       return false;
     } finally {
       if (this.sessionId === currentSession) {
         this.inFlightCount = Math.max(0, this.inFlightCount - 1);
+        this.pumpQueue();
       }
     }
-  }
-
-  /**
-   * Helper to continue processing remaining idle images after a slot frees up.
-   */
-  private pumpQueue(handler?: OrchestratorEventHandler): void {
-    const limit = this.options.concurrencyLimit || 1;
-    // We expect inFlightCount to decrease soon in the finally block,
-    // or we check if there's room assuming the caller's finally block is about to execute.
-    // To avoid race conditions, we can just call translateNext in the next microtask.
-    Promise.resolve().then(() => {
-      if (this.inFlightCount < limit) {
-        this.translateNext(handler).catch(() => {});
-      }
-    });
   }
 }

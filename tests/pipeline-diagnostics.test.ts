@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TranslationOrchestrator } from '../core/orchestrator/orchestrator';
 import { CachedTranslationProvider } from '../core/cache/cached-provider';
 import { KomaTranslationCache } from '../core/cache/cache';
+import { generateCacheKey } from '../core/cache/key';
 import { GeminiTranslationProvider } from '../providers/gemini/provider';
 import type { SiteAdapter } from '../adapters';
 import type { TranslationProvider, TranslationResult, TranslationRequest } from '../core/contracts';
@@ -61,6 +62,44 @@ describe('development pipeline diagnostics', () => {
     expect(provider.translatePage).toHaveBeenCalledTimes(1);
     expect(debug).toHaveBeenCalledWith('[Koma pipeline] cache: miss');
     expect(debug).toHaveBeenCalledWith('[Koma pipeline] cache: hit');
+  });
+
+  it('reports cache hits when the visible image is served before entering the prefetch queue', async () => {
+    vi.stubEnv('MODE', 'development');
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const cache = new KomaTranslationCache();
+    const provider: TranslationProvider = {
+      id: 'example',
+      name: 'Example',
+      capabilities: () => ({ vision: true, ocr: true, translation: true, boundingBoxes: true }),
+      translatePage: vi.fn(),
+    };
+    await cache.set(
+      generateCacheKey({ image, targetLanguage: 'id', providerId: provider.id }),
+      result
+    );
+    const adapter: SiteAdapter = {
+      name: 'test',
+      matches: () => true,
+      detectMangaImages: () => [image],
+      observeMangaImages: () => () => {},
+    };
+    const render = vi.fn();
+    const orchestrator = new TranslationOrchestrator(
+      provider,
+      adapter,
+      { render },
+      {
+        cache,
+        prefetchEnabled: false,
+      }
+    );
+
+    await orchestrator.translateNext();
+
+    expect(debug).toHaveBeenCalledWith('[Koma pipeline] cache: hit');
+    expect(provider.translatePage).not.toHaveBeenCalled();
+    expect(render).toHaveBeenCalledWith(result);
   });
 
   it('reports stage timings and a sanitized provider failure without exposing the key', async () => {
