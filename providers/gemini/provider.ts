@@ -181,14 +181,28 @@ export class GeminiTranslationProvider implements TranslationProvider {
       return { base64Data: data, mimeType: mime };
     }
 
-    if (img.url && !img.url.startsWith('blob:')) {
+    if (img.url) {
       try {
         const res = await this.fetch(img.url);
         if (!res.ok) {
           throw new Error(`HTTP ${res.status} fetching image URL`);
         }
         const buffer = await res.arrayBuffer();
-        const base64Data = Buffer.from(buffer).toString('base64');
+        let base64Data: string;
+        if (typeof Buffer !== 'undefined') {
+          base64Data = Buffer.from(buffer).toString('base64');
+        } else {
+          const bytes = new Uint8Array(buffer);
+          const chunkSize = 0x8000;
+          let binary = '';
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode.apply(
+              null,
+              bytes.subarray(i, i + chunkSize) as unknown as number[]
+            );
+          }
+          base64Data = btoa(binary);
+        }
         const mimeType = img.mimeType || res.headers.get('content-type') || 'image/jpeg';
         return { base64Data, mimeType };
       } catch (err) {

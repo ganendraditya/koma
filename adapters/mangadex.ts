@@ -64,8 +64,10 @@ export class MangaDexAdapter implements SiteAdapter {
       // Filename indices survive virtualized DOM windows and right-to-left spreads.
       const pageIndex = pageNumber - 1;
       if (images.has(pageIndex)) continue;
+      const id = `mangadex:${chapterId}:${pageIndex}`;
+      image.setAttribute('data-koma-image-id', id);
       images.set(pageIndex, {
-        id: `mangadex:${chapterId}:${pageIndex}`,
+        id,
         url: url.href,
         pageIndex,
         width,
@@ -75,6 +77,29 @@ export class MangaDexAdapter implements SiteAdapter {
       });
     }
     return [...images.values()].sort((a, b) => a.pageIndex - b.pageIndex);
+  }
+
+  getImageElement(image: MangaImage): Element | null {
+    if (typeof this.root.querySelector !== 'function') return null;
+    const byAttr = this.root.querySelector(`img[data-koma-image-id="${image.id}"]`);
+    if (byAttr) return byAttr;
+
+    const escapeCss =
+      typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+        ? CSS.escape
+        : (str: string) => str.replace(/["\\]/g, '\\$&');
+
+    if (image.metadata?.fileName && typeof image.metadata.fileName === 'string') {
+      const byAlt = this.root.querySelector(
+        `.md--reader-pages img.img[alt="${escapeCss(image.metadata.fileName)}"]`
+      );
+      if (byAlt) return byAlt;
+    }
+    if (image.url) {
+      const bySrc = this.root.querySelector(`img[src="${escapeCss(image.url)}"]`);
+      if (bySrc) return bySrc;
+    }
+    return null;
   }
 
   observeMangaImages(onChange: (images: MangaImage[]) => void): () => void {

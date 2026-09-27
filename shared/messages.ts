@@ -72,6 +72,13 @@ export interface DiagnosticReport {
 
 export interface TranslateActivePageRequest {
   type: typeof EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE;
+  retryImageId?: string;
+}
+
+export interface TranslateActivePageResponse {
+  success: boolean;
+  error?: string;
+  started?: boolean;
 }
 
 export interface TranslationProgressEvent {
