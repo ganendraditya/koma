@@ -223,6 +223,11 @@ document.addEventListener('DOMContentLoaded', async () => {
               statusEl.textContent = `Error: ${err}`;
               statusEl.style.color = 'var(--danger)';
             }
+          } else if (!response.started) {
+            if (statusEl) {
+              statusEl.textContent = 'No images pending translation';
+              statusEl.style.color = 'var(--text-secondary)';
+            }
           }
         }
       );

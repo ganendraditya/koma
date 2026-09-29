@@ -93,11 +93,17 @@ export class MangaDexAdapter implements SiteAdapter {
       const byAlt = this.root.querySelector(
         `.md--reader-pages img.img[alt="${escapeCss(image.metadata.fileName)}"]`
       );
-      if (byAlt) return byAlt;
+      if (byAlt) {
+        byAlt.setAttribute('data-koma-image-id', image.id);
+        return byAlt;
+      }
     }
     if (image.url) {
       const bySrc = this.root.querySelector(`img[src="${escapeCss(image.url)}"]`);
-      if (bySrc) return bySrc;
+      if (bySrc) {
+        bySrc.setAttribute('data-koma-image-id', image.id);
+        return bySrc;
+      }
     }
     return null;
   }

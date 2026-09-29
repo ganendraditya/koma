@@ -184,4 +184,24 @@ describe('MangaDex adapter', () => {
     window.dispatchEvent(new PopStateEvent('popstate'));
     await vi.waitFor(() => expect(onChange.mock.lastCall![0]).toEqual([]));
   });
+
+  it('resolves image element by attribute or fallback query, synchronizing data-koma-image-id', () => {
+    const { adapter } = setup();
+    const images = adapter.detectMangaImages();
+    expect(images.length).toBeGreaterThan(0);
+
+    const firstImage = images[0];
+    const el = adapter.getImageElement(firstImage);
+    expect(el).not.toBeNull();
+    expect(el?.getAttribute('data-koma-image-id')).toBe(firstImage.id);
+
+    // Simulate DOM node recreation without data-koma-image-id
+    el?.removeAttribute('data-koma-image-id');
+    expect(el?.hasAttribute('data-koma-image-id')).toBe(false);
+
+    // Should resolve via byAlt fallback and re-synchronize data-koma-image-id
+    const resolvedFallback = adapter.getImageElement(firstImage);
+    expect(resolvedFallback).toBe(el);
+    expect(resolvedFallback?.getAttribute('data-koma-image-id')).toBe(firstImage.id);
+  });
 });

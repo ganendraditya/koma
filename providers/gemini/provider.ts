@@ -22,6 +22,7 @@ export interface GeminiProviderOptions {
   baseUrl?: string;
   defaultTimeoutMs?: number;
   fetchFn?: typeof fetch; // Injectable fetch for unit testing
+  useNodeBuffer?: boolean; // Can be disabled to test/force browser Uint8Array decoding
 }
 
 export class GeminiTranslationProvider implements TranslationProvider {
@@ -33,6 +34,7 @@ export class GeminiTranslationProvider implements TranslationProvider {
   private readonly baseUrl: string;
   private readonly defaultTimeoutMs: number;
   private readonly fetch: typeof fetch;
+  private readonly useNodeBuffer: boolean;
 
   constructor(options: GeminiProviderOptions) {
     this.apiKey = options.apiKey?.trim();
@@ -40,6 +42,7 @@ export class GeminiTranslationProvider implements TranslationProvider {
     this.baseUrl = options.baseUrl || 'https://generativelanguage.googleapis.com/v1beta';
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30000;
     this.fetch = options.fetchFn ?? globalThis.fetch;
+    this.useNodeBuffer = options.useNodeBuffer ?? true;
   }
 
   capabilities(): ProviderCapabilities {
@@ -189,8 +192,11 @@ export class GeminiTranslationProvider implements TranslationProvider {
         }
         const buffer = await res.arrayBuffer();
         let base64Data: string;
-        if (typeof Buffer !== 'undefined') {
-          base64Data = Buffer.from(buffer).toString('base64');
+        const globalBuffer = this.useNodeBuffer
+          ? (globalThis as unknown as { Buffer?: typeof Buffer }).Buffer
+          : undefined;
+        if (typeof globalBuffer !== 'undefined') {
+          base64Data = globalBuffer.from(buffer).toString('base64');
         } else {
           const bytes = new Uint8Array(buffer);
           const chunkSize = 0x8000;

@@ -229,6 +229,84 @@ describe('KOMA-005: Gemini Multimodal Translation Provider', () => {
       expect(validateTranslationResult(result).valid).toBe(true);
     });
 
+    it('fetches image from URL and converts via browser fallback when Buffer is undefined', async () => {
+      const mockResponseBody = {
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    bubbles: [
+                      {
+                        box_2d: [150, 700, 280, 920],
+                        source_text: '何だこれは？！',
+                        translated_text: 'Apa-apaan ini?!',
+                        bubble_type: 'speech',
+                        reading_order: 1,
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+      };
+
+      const mockImageBytes = new Uint8Array([75, 79, 77, 65]); // "KOMA"
+      const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+        if (url.startsWith('https://generativelanguage.googleapis.com')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => mockResponseBody,
+          };
+        }
+        if (url === 'blob:https://mangadex.org/test-image-blob') {
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'image/jpeg' }),
+            arrayBuffer: async () => mockImageBytes.buffer,
+          };
+        }
+        return { ok: false, status: 404 };
+      });
+
+      const provider = new GeminiTranslationProvider({
+        apiKey: 'valid-api-key',
+        fetchFn: mockFetch as unknown as typeof fetch,
+        useNodeBuffer: false,
+      });
+
+      const request: TranslationRequest = {
+        image: {
+          id: 'blob_page_1',
+          pageIndex: 0,
+          url: 'blob:https://mangadex.org/test-image-blob',
+        },
+        targetLanguage: 'id',
+      };
+
+      const result = await provider.translatePage(request);
+
+      expect(mockFetch).toHaveBeenCalledWith('blob:https://mangadex.org/test-image-blob');
+      expect(result.imageId).toBe('blob_page_1');
+      expect(result.bubbles).toHaveLength(1);
+
+      // Verify the Gemini payload received the btoa-encoded data: btoa("KOMA") = "S09NQQ=="
+      const geminiCall = mockFetch.mock.calls.find((c) =>
+        c[0].includes('generativelanguage.googleapis.com')
+      );
+      expect(geminiCall).toBeDefined();
+      const payload = JSON.parse(geminiCall![1].body);
+      const inlineData = payload.contents[0].parts[0].inlineData;
+      expect(inlineData.data).toBe('S09NQQ==');
+      expect(inlineData.mimeType).toBe('image/jpeg');
+    });
+
     it('handles HTTP 429 rate limits and throws ProviderRateLimitError', async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: false,
