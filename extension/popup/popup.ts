@@ -208,14 +208,27 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (statusEl) {
       statusEl.textContent = 'Translating...';
+      statusEl.style.color = 'var(--text-primary)';
     }
 
     if (activeTabId) {
       chrome.tabs.sendMessage(
         activeTabId,
         { type: EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE },
-        () => {
-          // Future pipeline orchestrator will report progress
+        (response: { success?: boolean; error?: string; started?: boolean } | undefined) => {
+          if (chrome.runtime.lastError || !response?.success) {
+            const err =
+              chrome.runtime.lastError?.message || response?.error || 'Translation failed to start';
+            if (statusEl) {
+              statusEl.textContent = `Error: ${err}`;
+              statusEl.style.color = 'var(--danger)';
+            }
+          } else if (!response.started) {
+            if (statusEl) {
+              statusEl.textContent = 'No images pending translation';
+              statusEl.style.color = 'var(--text-secondary)';
+            }
+          }
         }
       );
     }

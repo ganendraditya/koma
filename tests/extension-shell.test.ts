@@ -220,6 +220,22 @@ describe('KOMA-002: Chrome Manifest V3 Extension Shell', () => {
       expect(sessionContextManager.getDialogueCount()).toBe(0);
       expect(sessionContextManager.getGlossary()).toHaveLength(0);
     });
+
+    it('handles TRANSLATE_ACTIVE_PAGE and rejects if page is unsupported', () => {
+      const sendResponse = vi.fn();
+      const keptChannelOpen = handleContentScriptMessage(
+        { type: EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE },
+        undefined,
+        sendResponse
+      );
+
+      // On localhost:3000 (not MangaDex chapter), it rejects synchronously
+      expect(keptChannelOpen).toBe(false);
+      expect(sendResponse).toHaveBeenCalledWith({
+        success: false,
+        error: 'Current page is not a supported reader chapter',
+      });
+    });
   });
 
   describe('Extension Settings & BYOK Foundation', () => {

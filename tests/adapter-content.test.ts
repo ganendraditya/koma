@@ -63,4 +63,19 @@ describe('Adapter content-script integration', () => {
     listener({ type: EXTENSION_MESSAGE_TYPES.RUN_DIAGNOSTIC }, {}, respond);
     expect(respond.mock.lastCall![0].contentScript.detectedImages).toBe(0);
   });
+
+  it('handles TRANSLATE_ACTIVE_PAGE and reports error when API key is missing', async () => {
+    const listener = await loadContent(
+      'https://mangadex.org/chapter/f4d00fe4-ed62-446b-a144-5f3d42ca923c'
+    );
+    const respond = vi.fn();
+    const keptOpen = listener({ type: EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE }, {}, respond);
+    expect(keptOpen).toBe(true);
+
+    await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+    expect(respond.mock.lastCall![0]).toEqual({
+      success: false,
+      error: 'Gemini API key is not configured',
+    });
+  });
 });

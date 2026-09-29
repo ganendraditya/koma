@@ -22,6 +22,7 @@ export interface GeminiProviderOptions {
   baseUrl?: string;
   defaultTimeoutMs?: number;
   fetchFn?: typeof fetch; // Injectable fetch for unit testing
+  useNodeBuffer?: boolean; // Can be disabled to test/force browser Uint8Array decoding
 }
 
 export class GeminiTranslationProvider implements TranslationProvider {
@@ -33,6 +34,7 @@ export class GeminiTranslationProvider implements TranslationProvider {
   private readonly baseUrl: string;
   private readonly defaultTimeoutMs: number;
   private readonly fetch: typeof fetch;
+  private readonly useNodeBuffer: boolean;
 
   constructor(options: GeminiProviderOptions) {
     this.apiKey = options.apiKey?.trim();
@@ -40,6 +42,7 @@ export class GeminiTranslationProvider implements TranslationProvider {
     this.baseUrl = options.baseUrl || 'https://generativelanguage.googleapis.com/v1beta';
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30000;
     this.fetch = options.fetchFn ?? globalThis.fetch;
+    this.useNodeBuffer = options.useNodeBuffer ?? true;
   }
 
   capabilities(): ProviderCapabilities {
@@ -181,14 +184,31 @@ export class GeminiTranslationProvider implements TranslationProvider {
       return { base64Data: data, mimeType: mime };
     }
 
-    if (img.url && !img.url.startsWith('blob:')) {
+    if (img.url) {
       try {
         const res = await this.fetch(img.url);
         if (!res.ok) {
           throw new Error(`HTTP ${res.status} fetching image URL`);
         }
         const buffer = await res.arrayBuffer();
-        const base64Data = Buffer.from(buffer).toString('base64');
+        let base64Data: string;
+        const globalBuffer = this.useNodeBuffer
+          ? (globalThis as unknown as { Buffer?: typeof Buffer }).Buffer
+          : undefined;
+        if (typeof globalBuffer !== 'undefined') {
+          base64Data = globalBuffer.from(buffer).toString('base64');
+        } else {
+          const bytes = new Uint8Array(buffer);
+          const chunkSize = 0x8000;
+          let binary = '';
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode.apply(
+              null,
+              bytes.subarray(i, i + chunkSize) as unknown as number[]
+            );
+          }
+          base64Data = btoa(binary);
+        }
         const mimeType = img.mimeType || res.headers.get('content-type') || 'image/jpeg';
         return { base64Data, mimeType };
       } catch (err) {
