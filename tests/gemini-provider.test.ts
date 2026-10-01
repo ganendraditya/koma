@@ -358,31 +358,78 @@ describe('KOMA-005: Gemini Multimodal Translation Provider', () => {
       await expect(provider.translatePage(request)).rejects.toBeInstanceOf(ProviderAuthError);
     });
 
-    it('handles request timeout and throws ProviderTimeoutError', async () => {
-      const mockFetch = vi.fn().mockImplementation((_url, options) => {
-        return new Promise((_, reject) => {
-          options?.signal?.addEventListener('abort', () => {
-            const err = new Error('The operation was aborted');
-            err.name = 'AbortError';
-            reject(err);
+    it('accepts a slow successful response within the default deadline', async () => {
+      vi.useFakeTimers();
+      try {
+        const mockFetch = vi.fn((_url: RequestInfo | URL, options?: RequestInit) => {
+          return new Promise<Response>((resolve, reject) => {
+            const responseTimer = setTimeout(
+              () =>
+                resolve(
+                  Response.json({
+                    candidates: [{ content: { parts: [{ text: '{"bubbles":[]}' }] } }],
+                  })
+                ),
+              45000
+            );
+            options?.signal?.addEventListener('abort', () => {
+              clearTimeout(responseTimer);
+              reject(new DOMException('The operation was aborted', 'AbortError'));
+            });
           });
         });
-      });
-
-      const provider = new GeminiTranslationProvider({
-        apiKey: 'key',
-        defaultTimeoutMs: 50,
-        fetchFn: mockFetch as unknown as typeof fetch,
-      });
-
-      const request: TranslationRequest = {
-        image: { id: 'img_timeout', pageIndex: 0, base64Data: 'dummy' },
-        targetLanguage: 'id',
-        options: { timeoutMs: 50 },
-      };
-
-      await expect(provider.translatePage(request)).rejects.toBeInstanceOf(ProviderTimeoutError);
+        const provider = new GeminiTranslationProvider({ apiKey: 'key', fetchFn: mockFetch });
+        const translation = provider.translatePage({
+          image: { id: 'slow-page', pageIndex: 0, base64Data: 'dummy' },
+          targetLanguage: 'en',
+        });
+        const assertion = expect(translation).resolves.toMatchObject({
+          imageId: 'slow-page',
+          targetLanguage: 'en',
+          bubbles: [],
+        });
+        await vi.advanceTimersByTimeAsync(45000);
+        await assertion;
+        expect(mockFetch.mock.calls[0][1]?.signal?.aborted).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
+
+    it.each([undefined, 20])(
+      'handles timeout overrides (%s) with ProviderTimeoutError',
+      async (requestTimeout) => {
+        const mockFetch = vi.fn().mockImplementation((_url, options) => {
+          return new Promise((_, reject) => {
+            options?.signal?.addEventListener('abort', () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          });
+        });
+
+        const provider = new GeminiTranslationProvider({
+          apiKey: 'key',
+          defaultTimeoutMs: 50,
+          fetchFn: mockFetch as unknown as typeof fetch,
+        });
+
+        const request: TranslationRequest = {
+          image: { id: 'img_timeout', pageIndex: 0, base64Data: 'dummy' },
+          targetLanguage: 'id',
+          options: { timeoutMs: requestTimeout },
+        };
+
+        const translation = provider.translatePage(request);
+        await expect(translation).rejects.toBeInstanceOf(ProviderTimeoutError);
+        await expect(translation).rejects.toMatchObject({
+          name: 'ProviderTimeoutError',
+          timeoutMs: requestTimeout ?? 50,
+        });
+      }
+    );
 
     it('verifies 3 representative test fixtures (action panel, dialogue confrontation, long narration)', () => {
       // Fixture 1: Action Panel (sound effect + quick shout)
