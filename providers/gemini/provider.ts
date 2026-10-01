@@ -41,7 +41,7 @@ export class GeminiTranslationProvider implements TranslationProvider {
     this.modelName = options.modelName || DEFAULT_GEMINI_MODEL;
     this.baseUrl = options.baseUrl || 'https://generativelanguage.googleapis.com/v1beta';
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30000;
-    this.fetch = options.fetchFn ?? globalThis.fetch;
+    this.fetch = options.fetchFn ?? globalThis.fetch.bind(globalThis);
     this.useNodeBuffer = options.useNodeBuffer ?? true;
   }
 
