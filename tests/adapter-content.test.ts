@@ -78,4 +78,76 @@ describe('Adapter content-script integration', () => {
       error: 'Gemini API key is not configured',
     });
   });
+
+  it('renders with browser-bound fetch, carries context, and reuses cached translations', async () => {
+    await loadContent('https://mangadex.org/chapter/f4d00fe4-ed62-446b-a144-5f3d42ca923c');
+    const prompts: string[] = [];
+    const fetchMock = vi.fn(async function (
+      this: unknown,
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation');
+      if (!String(input).startsWith('https://generativelanguage.googleapis.com/')) {
+        return new Response('image bytes', { headers: { 'content-type': 'image/png' } });
+      }
+      const payload = JSON.parse(init?.body as string);
+      prompts.push(payload.systemInstruction.parts[0].text);
+      return Response.json({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    bubbles: [
+                      {
+                        box_2d: [100, 100, 300, 400],
+                        source_text: '待て',
+                        translated_text: 'Wait here.',
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { getOrCreateOrchestrator, overlayRenderer, translationCache, sessionContextManager } =
+      await import('../extension/content/content-script');
+    const orchestrator = getOrCreateOrchestrator('test-key', 'test-model', 'en');
+    await orchestrator.translateNext();
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll('[data-koma-bubble-text]')).toHaveLength(2)
+    );
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toContain('Wait here.');
+    expect(prompts[1]).toContain('Wait here.');
+    expect(await translationCache.size()).toBe(2);
+
+    overlayRenderer.removeAllOverlays();
+    sessionContextManager.reset();
+    orchestrator.reset();
+    fetchMock.mockClear();
+    await orchestrator.translateNext();
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll('[data-koma-bubble-text]')).toHaveLength(2)
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sessionContextManager.getDialogueCount()).toBe(2);
+
+    const changedModel = getOrCreateOrchestrator('test-key', 'other-model', 'en');
+    sessionContextManager.reset();
+    await changedModel.translateNext();
+    await vi.waitFor(() =>
+      expect([...changedModel.getState().values()].every((s) => s.status === 'completed')).toBe(
+        true
+      )
+    );
+    expect(prompts).toHaveLength(4);
+    overlayRenderer.removeAllOverlays();
+  });
 });
