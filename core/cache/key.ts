@@ -121,5 +121,6 @@ export function generateCacheKey(input: CacheKeyInput): string {
   const modelIdent = (input.modelId || 'default-model').trim().toLowerCase();
   const ctxFingerprint = computeContextFingerprint(input.context, input.customPrompt);
 
-  return `koma:cache:v1:${imageIdent}:${sourceLang}:${targetLang}:${providerIdent}:${modelIdent}:ctx_${ctxFingerprint}`;
+  const configuration = input.cacheIdentity ? `:cfg_${fnv1aHex(input.cacheIdentity)}` : '';
+  return `koma:cache:v1:${imageIdent}:${sourceLang}:${targetLang}:${providerIdent}:${modelIdent}:ctx_${ctxFingerprint}${configuration}`;
 }

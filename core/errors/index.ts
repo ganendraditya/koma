@@ -81,11 +81,13 @@ export class InvalidProviderResponseError extends ProviderError {
     message = 'Provider returned invalid or malformed response',
     providerId?: string,
     rawResponse?: unknown,
-    validationErrors?: string[]
+    validationErrors?: string[],
+    public readonly reason?: 'incomplete' | 'refusal'
   ) {
     super(message, 'KOMA_INVALID_RESPONSE_ERROR', providerId, {
       rawResponse,
       validationErrors,
+      reason,
     });
     this.rawResponse = rawResponse;
     this.validationErrors = validationErrors;
