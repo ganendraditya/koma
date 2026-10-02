@@ -26,6 +26,7 @@ export class CachedTranslationProvider implements TranslationProvider {
   public readonly id: string;
   public readonly name: string;
   public readonly modelName?: string;
+  public readonly cacheIdentity?: string;
   public readonly cache: TranslationCache;
   private readonly provider: TranslationProvider;
   private readonly inFlight = new Map<string, Promise<TranslationResult>>();
@@ -36,6 +37,7 @@ export class CachedTranslationProvider implements TranslationProvider {
     this.id = provider.id;
     this.name = provider.name;
     this.modelName = provider.modelName;
+    this.cacheIdentity = provider.cacheIdentity;
   }
 
   capabilities(): ProviderCapabilities {
@@ -51,6 +53,7 @@ export class CachedTranslationProvider implements TranslationProvider {
       sourceLanguage: request.sourceLanguage,
       providerId: this.provider.id,
       modelId,
+      cacheIdentity: this.cacheIdentity,
       context: request.context,
       customPrompt: request.options?.customPrompt,
     });

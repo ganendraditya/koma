@@ -44,7 +44,7 @@ For local development or testing CLI integration scripts, copy the example envir
 cp .env.example .env
 ```
 
-> **Security Note**: Never commit `.env` files or API credentials. In standard usage, Koma uses Bring Your Own Key (BYOK) stored locally in `chrome.storage.local`.
+Never commit `.env` files or API credentials. Koma supports Gemini, OpenAI, and custom OpenAI-compatible BYOK endpoints. Keys can be kept for the browser session or remembered in unencrypted extension local storage. See [BYOK provider setup](docs/BYOK_PROVIDERS.md) for configuration, reasoning models, and storage behavior.
 
 ---
 

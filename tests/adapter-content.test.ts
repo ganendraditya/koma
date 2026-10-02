@@ -6,6 +6,7 @@ import {
   EXTENSION_MESSAGE_TYPES,
   type CheckPageStatusResponse,
   type DiagnosticReport,
+  type ProviderRuntimeConfig,
 } from '@shared';
 
 type Listener = Parameters<typeof chrome.runtime.onMessage.addListener>[0];
@@ -32,7 +33,13 @@ async function loadContent(url: string) {
   vi.stubGlobal('chrome', {
     runtime: {
       onMessage: { addListener },
-      sendMessage: vi.fn((_message, respond) => respond({ status: 'OK', version: '0.1.0' })),
+      sendMessage: vi.fn((message, respond) =>
+        respond(
+          message.type === EXTENSION_MESSAGE_TYPES.GET_PROVIDER_CONFIG
+            ? { success: true, config: { ...runtimeConfig, configured: false } }
+            : { status: 'OK', version: '0.1.0' }
+        )
+      ),
     },
   });
   await import('../extension/content/content-script');
@@ -75,7 +82,7 @@ describe('Adapter content-script integration', () => {
     await vi.waitFor(() => expect(respond).toHaveBeenCalled());
     expect(respond.mock.lastCall![0]).toEqual({
       success: false,
-      error: 'Gemini API key is not configured',
+      error: 'Configure Google Gemini in Provider Settings before translating.',
     });
   });
 
@@ -116,9 +123,42 @@ describe('Adapter content-script integration', () => {
       });
     });
     vi.stubGlobal('fetch', fetchMock);
+    const { handleTranslationPort } = await import('../extension/background/translation');
+    const { saveProviderSettings } = await import('../extension/settings/storage');
+    const { defaultProviderConfig } = await import('../providers/config');
+    const { getRuntimeProviderConfig } = await import('../extension/background/translation');
+    await saveProviderSettings(
+      { ...defaultProviderConfig('gemini'), apiKey: 'test-key', modelName: 'test-model' },
+      'en'
+    );
+    let config = await getRuntimeProviderConfig();
+    chrome.runtime.id = 'test-extension';
+    chrome.runtime.connect = vi.fn(() => {
+      const workerListeners: ((message: unknown) => void)[] = [];
+      const clientListeners: ((message: unknown) => void)[] = [];
+      const disconnectListeners: (() => void)[] = [];
+      const worker = {
+        name: 'koma-translation',
+        sender: { id: chrome.runtime.id },
+        onMessage: {
+          addListener: (listener: (message: unknown) => void) => workerListeners.push(listener),
+        },
+        onDisconnect: { addListener: (listener: () => void) => disconnectListeners.push(listener) },
+        postMessage: (message: unknown) => clientListeners.forEach((listener) => listener(message)),
+      };
+      handleTranslationPort(worker as unknown as chrome.runtime.Port);
+      return {
+        onMessage: {
+          addListener: (listener: (message: unknown) => void) => clientListeners.push(listener),
+        },
+        onDisconnect: { addListener: vi.fn() },
+        postMessage: (message: unknown) => workerListeners.forEach((listener) => listener(message)),
+        disconnect: () => disconnectListeners.forEach((listener) => listener()),
+      } as unknown as chrome.runtime.Port;
+    });
     const { getOrCreateOrchestrator, overlayRenderer, translationCache, sessionContextManager } =
       await import('../extension/content/content-script');
-    const orchestrator = getOrCreateOrchestrator('test-key', 'test-model', 'en');
+    const orchestrator = getOrCreateOrchestrator(config);
     await orchestrator.translateNext();
     await vi.waitFor(() =>
       expect(document.querySelectorAll('[data-koma-bubble-text]')).toHaveLength(2)
@@ -139,7 +179,12 @@ describe('Adapter content-script integration', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(sessionContextManager.getDialogueCount()).toBe(2);
 
-    const changedModel = getOrCreateOrchestrator('test-key', 'other-model', 'en');
+    await saveProviderSettings(
+      { ...defaultProviderConfig('gemini'), apiKey: 'test-key', modelName: 'other-model' },
+      'en'
+    );
+    config = await getRuntimeProviderConfig();
+    const changedModel = getOrCreateOrchestrator(config);
     sessionContextManager.reset();
     await changedModel.translateNext();
     await vi.waitFor(() =>
@@ -151,3 +196,14 @@ describe('Adapter content-script integration', () => {
     overlayRenderer.removeAllOverlays();
   });
 });
+
+const runtimeConfig: ProviderRuntimeConfig = {
+  revision: 0,
+  id: 'gemini-multimodal',
+  name: 'Google Gemini',
+  modelName: 'test-model',
+  cacheIdentity: 'test',
+  targetLanguage: 'en',
+  configured: true,
+  capabilities: { vision: true, ocr: true, translation: true, boundingBoxes: true },
+};

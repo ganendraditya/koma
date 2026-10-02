@@ -14,14 +14,13 @@ import {
   type TranslateActivePageRequest,
   type TranslateActivePageResponse,
   type TranslationProgressEvent,
+  type ProviderRuntimeConfig,
 } from '@shared';
 import { ContextManager, ContextAwareProvider, type IContextManager } from '@core/context';
 import { CachedTranslationProvider, KomaTranslationCache } from '@core/cache';
 import { TranslationOrchestrator, type ITranslationOrchestrator } from '@core/orchestrator';
 import { DOMOverlayRenderer } from '@core/renderer';
-import { GeminiTranslationProvider } from '@providers/gemini/provider';
-import { DEFAULT_GEMINI_MODEL } from '@providers/gemini/types';
-import { getStoredGeminiConfig } from '@providers/gemini/storage';
+import { ExtensionTranslationProvider } from './provider';
 import { resolveTargetImage } from './target-image';
 
 if (typeof window !== 'undefined') {
@@ -35,45 +34,44 @@ export const translationCache = new KomaTranslationCache();
 const adapter = new MangaDexAdapter();
 
 let activeOrchestrator: ITranslationOrchestrator | null = null;
-let currentApiKey = '';
-let currentModelName = '';
-let currentTargetLanguage = '';
+let currentConfigSignature = '';
+let activeProvider: ExtensionTranslationProvider | null = null;
 let currentContextManager: IContextManager | null = null;
 let currentRenderer: DOMOverlayRenderer | null = null;
 let currentCache: KomaTranslationCache | null = null;
 
 export function getOrCreateOrchestrator(
-  apiKey: string,
-  modelName: string,
-  targetLanguage: string,
+  config: ProviderRuntimeConfig,
   contextManager: IContextManager = sessionContextManager,
   renderer: DOMOverlayRenderer = overlayRenderer,
   cache = translationCache
 ): ITranslationOrchestrator {
+  const configSignature = JSON.stringify([
+    config.revision,
+    config.id,
+    config.modelName,
+    config.targetLanguage,
+    config.cacheIdentity,
+  ]);
   if (
     !activeOrchestrator ||
-    currentApiKey !== apiKey ||
-    currentModelName !== modelName ||
-    currentTargetLanguage !== targetLanguage ||
+    currentConfigSignature !== configSignature ||
     currentContextManager !== contextManager ||
     currentRenderer !== renderer ||
     currentCache !== cache
   ) {
-    currentApiKey = apiKey;
-    currentModelName = modelName;
-    currentTargetLanguage = targetLanguage;
+    currentConfigSignature = configSignature;
     currentContextManager = contextManager;
     currentRenderer = renderer;
     currentCache = cache;
 
     if (activeOrchestrator) {
+      activeProvider?.cancel();
       activeOrchestrator.reset();
     }
 
-    const baseProvider = new GeminiTranslationProvider({
-      apiKey,
-      modelName,
-    });
+    const baseProvider = new ExtensionTranslationProvider(config);
+    activeProvider = baseProvider;
 
     const cachedProvider = new CachedTranslationProvider(baseProvider, cache);
     const contextAwareProvider = new ContextAwareProvider(cachedProvider, contextManager);
@@ -87,7 +85,7 @@ export function getOrCreateOrchestrator(
         },
       },
       {
-        targetLanguage,
+        targetLanguage: config.targetLanguage,
         concurrencyLimit: 1,
         lookAheadCount: 2,
         prefetchEnabled: true,
@@ -122,6 +120,13 @@ export function handleContentScriptMessage(
   }
 
   const req = message as { type?: string };
+
+  if (req.type === EXTENSION_MESSAGE_TYPES.PROVIDER_SETTINGS_CHANGED) {
+    activeProvider?.cancel();
+    activeOrchestrator?.reset();
+    activeOrchestrator = null;
+    return false;
+  }
 
   if (req.type === EXTENSION_MESSAGE_TYPES.CHECK_PAGE_STATUS) {
     const pageUrl = typeof window !== 'undefined' ? window.location?.href || '' : '';
@@ -206,22 +211,25 @@ export function handleContentScriptMessage(
 
     (async () => {
       try {
-        const config = await getStoredGeminiConfig();
-        if (!config.apiKey?.trim()) {
+        const config = await new Promise<ProviderRuntimeConfig>((resolve, reject) => {
+          chrome.runtime.sendMessage(
+            { type: EXTENSION_MESSAGE_TYPES.GET_PROVIDER_CONFIG },
+            (response) => {
+              if (chrome.runtime.lastError || !response?.success) {
+                reject(new Error(response?.error || 'Could not load provider settings.'));
+              } else resolve(response.config);
+            }
+          );
+        });
+        if (!config.configured) {
           sendResponse?.({
             success: false,
-            error: 'Gemini API key is not configured',
+            error: `Configure ${config.name} in Provider Settings before translating.`,
           } satisfies TranslateActivePageResponse);
           return;
         }
 
-        const orchestrator = getOrCreateOrchestrator(
-          config.apiKey,
-          config.modelName || DEFAULT_GEMINI_MODEL,
-          config.targetLanguage || 'id',
-          contextManager,
-          renderer
-        );
+        const orchestrator = getOrCreateOrchestrator(config, contextManager, renderer);
 
         const notifyProgress = (event: TranslationProgressEvent) => {
           if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {

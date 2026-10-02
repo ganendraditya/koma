@@ -1,9 +1,11 @@
-/**
- * Koma Popup Logic
- * Handles control surface, diagnostics, and provider settings.
- */
-
-import { getStoredGeminiConfig, saveStoredGeminiConfig } from '@providers/gemini/storage';
+import {
+  getProviderSettings,
+  saveProviderSettings,
+  type ProviderSettings,
+} from '../settings/storage';
+import { normalizeBaseUrl, type ProviderConfig, type ProviderId } from '@providers/config';
+import { supportedReasoningEfforts } from '@providers/openai/models';
+import { SUPPORTED_GEMINI_MODELS } from '@providers/gemini/types';
 import {
   EXTENSION_MESSAGE_TYPES,
   CheckPageStatusResponse,
@@ -11,40 +13,52 @@ import {
   ResetContextResponse,
 } from '@shared/messages';
 
-document.addEventListener('DOMContentLoaded', async () => {
-  // Elements - Status
+export async function initializePopup(): Promise<void> {
   const statusEl = document.getElementById('status-text') as HTMLElement;
   const siteEl = document.getElementById('site-text') as HTMLElement;
   const imageCountEl = document.getElementById('image-count-text') as HTMLElement;
   const apiIndicatorEl = document.getElementById('api-indicator') as HTMLElement;
 
-  // Elements - Actions
   const translateBtn = document.getElementById('btn-translate') as HTMLButtonElement;
   const diagnosticBtn = document.getElementById('btn-diagnostic') as HTMLButtonElement;
 
-  // Elements - Diagnostics
   const diagBox = document.getElementById('diagnostic-box') as HTMLElement;
   const diagTimeEl = document.getElementById('diagnostic-time') as HTMLElement;
   const diagCsStatus = document.getElementById('diag-cs-status') as HTMLElement;
   const diagSwStatus = document.getElementById('diag-sw-status') as HTMLElement;
   const diagImgCount = document.getElementById('diag-img-count') as HTMLElement;
 
-  // Elements - Settings
   const toggleSettingsBtn = document.getElementById('btn-toggle-settings') as HTMLButtonElement;
   const settingsPanel = document.getElementById('settings-panel') as HTMLElement;
   const settingsChevron = document.getElementById('settings-chevron') as HTMLElement;
   const apiKeyInput = document.getElementById('input-api-key') as HTMLInputElement;
+  const providerSelect = document.getElementById('select-provider') as HTMLSelectElement;
+  const keyLabel = document.getElementById('api-key-label') as HTMLLabelElement;
+  const baseUrlInput = document.getElementById('input-base-url') as HTMLInputElement;
+  const customEndpointFields = document.getElementById('custom-endpoint-fields') as HTMLElement;
+  const apiFormatSelect = document.getElementById('select-api-format') as HTMLSelectElement;
+  const responseFormatSelect = document.getElementById(
+    'select-response-format'
+  ) as HTMLSelectElement;
+  const reasoningSelect = document.getElementById('select-reasoning') as HTMLSelectElement;
+  const reasoningFields = document.getElementById('reasoning-fields') as HTMLElement;
+  const reasoningHelp = document.getElementById('reasoning-help') as HTMLElement;
+  const rememberKeyInput = document.getElementById('remember-key') as HTMLInputElement;
+  const modelSuggestions = document.getElementById('model-suggestions') as HTMLDataListElement;
+  const destinationEl = document.getElementById('provider-destination') as HTMLElement;
   const toggleKeyVisibilityBtn = document.getElementById(
     'btn-toggle-key-visibility'
   ) as HTMLButtonElement;
   const targetLangSelect = document.getElementById('select-target-lang') as HTMLSelectElement;
-  const modelSelect = document.getElementById('select-model') as HTMLSelectElement;
+  const modelInput = document.getElementById('input-model') as HTMLInputElement;
   const saveSettingsBtn = document.getElementById('btn-save-settings') as HTMLButtonElement;
   const resetContextBtn = document.getElementById('btn-reset-context') as HTMLButtonElement;
   const feedbackEl = document.getElementById('settings-feedback') as HTMLElement;
 
   let activeTabId: number | undefined;
   let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+  let settings: ProviderSettings | undefined;
+  let selectedProvider: ProviderId = 'gemini';
 
   function showFeedback(text: string, type: 'success' | 'error', duration = 2500): void {
     if (!feedbackEl) {
@@ -65,7 +79,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Listen for translation progress updates
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === EXTENSION_MESSAGE_TYPES.TRANSLATION_PROGRESS) {
       if (statusEl) {
@@ -82,10 +95,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  function updateKeyIndicator(hasKey: boolean) {
+  function updateKeyIndicator(hasKey: boolean, keyOptional = false) {
     if (!apiIndicatorEl) return;
-    if (hasKey) {
-      apiIndicatorEl.textContent = 'Key Configured';
+    if (hasKey || keyOptional) {
+      apiIndicatorEl.textContent = hasKey ? 'Key Configured' : 'No key supplied';
       apiIndicatorEl.className = 'pill pill-success';
     } else {
       apiIndicatorEl.textContent = 'Key Required';
@@ -93,18 +106,119 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // 1. Initialize Settings
-  try {
-    const config = await getStoredGeminiConfig();
-    if (apiKeyInput) apiKeyInput.value = config.apiKey || '';
-    if (targetLangSelect) targetLangSelect.value = config.targetLanguage || 'id';
-    if (modelSelect) modelSelect.value = config.modelName || 'gemini-3.5-flash-lite';
-    updateKeyIndicator(Boolean(config.apiKey?.trim()));
-  } catch (error) {
-    console.error('[Koma] Failed to load provider settings:', error);
+  function openSettings(): void {
+    settingsPanel.classList.add('open');
+    settingsChevron.textContent = '▴';
+    toggleSettingsBtn.setAttribute('aria-expanded', 'true');
   }
 
-  // 2. Query Active Tab & Probe Content Script
+  function readProfile(): ProviderConfig {
+    return {
+      ...settings!.profiles[selectedProvider],
+      apiKey: apiKeyInput.value.trim(),
+      modelName: modelInput.value.trim(),
+      baseUrl:
+        selectedProvider === 'openai-compatible'
+          ? baseUrlInput.value.trim()
+          : settings!.profiles[selectedProvider].baseUrl,
+      apiFormat: apiFormatSelect.value as ProviderConfig['apiFormat'],
+      responseFormat: responseFormatSelect.value as ProviderConfig['responseFormat'],
+      reasoningEffort: reasoningSelect.value as ProviderConfig['reasoningEffort'],
+      rememberKey: rememberKeyInput.checked,
+    };
+  }
+
+  function updateReasoningOptions(): void {
+    const supported =
+      selectedProvider === 'openai'
+        ? supportedReasoningEfforts(modelInput.value.trim())
+        : undefined;
+    for (const option of reasoningSelect.options) {
+      option.disabled =
+        option.value !== 'auto' &&
+        Boolean(
+          supported &&
+          !supported.includes(option.value as Exclude<ProviderConfig['reasoningEffort'], 'auto'>)
+        );
+    }
+    if (reasoningSelect.selectedOptions[0]?.disabled) reasoningSelect.value = 'auto';
+    reasoningHelp.textContent =
+      selectedProvider === 'openai-compatible'
+        ? 'Auto sends no reasoning control. Explicit efforts require endpoint support. Reasoning text is never rendered.'
+        : supported?.length
+          ? 'Auto uses Low for this model. Higher effort can take longer and use more tokens.'
+          : 'Auto uses the model’s own settings. Choose a vision-capable model; reasoning controls vary by model.';
+  }
+
+  function showProfile(): void {
+    const profile = settings!.profiles[selectedProvider];
+    providerSelect.value = selectedProvider;
+    apiKeyInput.value = profile.apiKey;
+    apiKeyInput.type = 'password';
+    toggleKeyVisibilityBtn.textContent = 'Show';
+    keyLabel.textContent =
+      selectedProvider === 'gemini'
+        ? 'Gemini API key'
+        : selectedProvider === 'openai'
+          ? 'OpenAI API key'
+          : 'API key (optional for local servers)';
+    apiKeyInput.placeholder = 'Your provider API key';
+    modelInput.value = profile.modelName;
+    modelInput.placeholder = selectedProvider === 'openai-compatible' ? 'Your vision model ID' : '';
+    baseUrlInput.value = profile.baseUrl;
+    apiFormatSelect.value = profile.apiFormat;
+    responseFormatSelect.value = profile.responseFormat;
+    reasoningSelect.value = profile.reasoningEffort;
+    rememberKeyInput.checked = profile.rememberKey;
+    customEndpointFields.hidden = selectedProvider !== 'openai-compatible';
+    reasoningFields.hidden = selectedProvider === 'gemini';
+    modelSuggestions.replaceChildren();
+    const models =
+      selectedProvider === 'gemini'
+        ? SUPPORTED_GEMINI_MODELS
+        : selectedProvider === 'openai'
+          ? ['gpt-4.1-mini', 'gpt-5-mini', 'o4-mini']
+          : [];
+    for (const model of models) {
+      const option = document.createElement('option');
+      option.value = model;
+      modelSuggestions.append(option);
+    }
+    destinationEl.textContent =
+      selectedProvider === 'gemini'
+        ? 'Manga images and recent dialogue are sent directly to Google Gemini.'
+        : selectedProvider === 'openai'
+          ? 'Manga images and recent dialogue are sent directly to OpenAI.'
+          : 'Manga images and recent dialogue are sent directly to the endpoint you configure.';
+    updateReasoningOptions();
+  }
+
+  try {
+    settings = await getProviderSettings();
+    selectedProvider = settings.provider;
+    targetLangSelect.value = settings.targetLanguage;
+    showProfile();
+    updateKeyIndicator(
+      Boolean(settings.profiles[selectedProvider].apiKey),
+      selectedProvider === 'openai-compatible'
+    );
+  } catch (error) {
+    showFeedback(
+      `Could not load settings: ${error instanceof Error ? error.message : 'Storage unavailable'}`,
+      'error',
+      0
+    );
+    saveSettingsBtn.disabled = true;
+  }
+
+  providerSelect.addEventListener('change', () => {
+    if (!settings) return;
+    settings.profiles[selectedProvider] = readProfile();
+    selectedProvider = providerSelect.value as ProviderId;
+    showProfile();
+  });
+  modelInput.addEventListener('input', updateReasoningOptions);
+
   try {
     if (typeof chrome !== 'undefined' && chrome.tabs?.query) {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -120,7 +234,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         }
 
-        // Send status check to content script
         chrome.tabs.sendMessage(
           tab.id,
           { type: EXTENSION_MESSAGE_TYPES.CHECK_PAGE_STATUS },
@@ -145,7 +258,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (statusEl) statusEl.textContent = 'Tab query failed';
   }
 
-  // 3. Diagnostics Action
   diagnosticBtn?.addEventListener('click', () => {
     diagBox.classList.add('visible');
     diagTimeEl.textContent = new Date().toLocaleTimeString();
@@ -196,13 +308,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     );
   });
 
-  // 4. Translate Button Action
   translateBtn?.addEventListener('click', async () => {
-    const config = await getStoredGeminiConfig();
-    if (!config.apiKey?.trim()) {
-      settingsPanel.classList.add('open');
-      settingsChevron.textContent = '▴';
-      showFeedback('Please configure your Gemini API Key below.', 'error');
+    try {
+      const saved = await getProviderSettings();
+      const config = saved.profiles[saved.provider];
+      if (
+        !config.modelName ||
+        !config.baseUrl ||
+        (!config.apiKey && saved.provider !== 'openai-compatible')
+      ) {
+        openSettings();
+        showFeedback(
+          'Configure your selected provider and save settings before translating.',
+          'error',
+          0
+        );
+        return;
+      }
+    } catch {
+      showFeedback('Could not load provider settings. Retry saving them.', 'error', 0);
       return;
     }
 
@@ -234,13 +358,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 5. Settings Toggle
   toggleSettingsBtn?.addEventListener('click', () => {
     const isOpen = settingsPanel.classList.toggle('open');
     settingsChevron.textContent = isOpen ? '▴' : '▾';
+    toggleSettingsBtn.setAttribute('aria-expanded', String(isOpen));
   });
 
-  // 6. Toggle Key Visibility
   toggleKeyVisibilityBtn?.addEventListener('click', () => {
     if (apiKeyInput.type === 'password') {
       apiKeyInput.type = 'text';
@@ -251,30 +374,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 7. Save Settings
   saveSettingsBtn?.addEventListener('click', async () => {
+    if (!settings) return;
+    saveSettingsBtn.disabled = true;
+    showFeedback('Saving provider settings...', 'success', 0);
     try {
-      const apiKey = apiKeyInput.value.trim();
-      const targetLanguage = targetLangSelect.value;
-      const modelName = modelSelect.value;
-
-      await saveStoredGeminiConfig({
-        apiKey,
-        targetLanguage,
-        modelName,
-      });
-
-      updateKeyIndicator(Boolean(apiKey));
-      showFeedback('Settings saved successfully!', 'success');
+      const profile = readProfile();
+      if (profile.provider === 'openai-compatible') {
+        const url = new URL(normalizeBaseUrl(profile.baseUrl));
+        // Request inside the click handler, before awaiting storage, to preserve the user gesture.
+        const granted = await chrome.permissions.request({
+          origins: [`${url.protocol}//${url.hostname}/*`],
+        });
+        if (!granted)
+          throw new Error('Endpoint access was not granted. Save again to allow access.');
+      }
+      settings = await saveProviderSettings(profile, targetLangSelect.value);
+      showProfile();
+      updateKeyIndicator(Boolean(profile.apiKey), selectedProvider === 'openai-compatible');
+      showFeedback('Provider settings saved.', 'success');
     } catch (error) {
       showFeedback(
         `Save failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'error'
       );
+    } finally {
+      saveSettingsBtn.disabled = false;
     }
   });
 
-  // 8. Reset Context Action
   resetContextBtn?.addEventListener('click', () => {
     if (!activeTabId) {
       showFeedback('No active page to reset context.', 'error');
@@ -293,4 +421,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     );
   });
-});
+}
+
+document.addEventListener('DOMContentLoaded', initializePopup);

@@ -6,6 +6,7 @@ export interface CacheKeyInput {
   sourceLanguage?: string;
   providerId?: string;
   modelId?: string;
+  cacheIdentity?: string;
   context?: ContextPacket;
   customPrompt?: string;
   documentUrl?: string;
