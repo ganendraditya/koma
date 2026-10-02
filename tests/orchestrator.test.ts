@@ -100,48 +100,55 @@ describe('TranslationOrchestrator', () => {
     expect(mockProvider.translatePage).toHaveBeenCalledTimes(1);
   });
 
-  it('allows retrying failed translations', async () => {
-    const images: MangaImage[] = [
-      { id: 'img-1', url: 'blob:1', pageIndex: 0, width: 100, height: 100 },
-    ];
-    vi.mocked(mockAdapter.detectMangaImages).mockReturnValue(images);
+  it.each(['retry', 'translateNext'] as const)(
+    'allows retrying failed translations using %s',
+    async (action) => {
+      const images: MangaImage[] = [
+        { id: 'img-1', url: 'blob:1', pageIndex: 0, width: 100, height: 100 },
+      ];
+      vi.mocked(mockAdapter.detectMangaImages).mockReturnValue(images);
 
-    const error = new Error('Network timeout');
-    vi.mocked(mockProvider.translatePage).mockRejectedValueOnce(error);
+      const error = new Error('Network timeout');
+      vi.mocked(mockProvider.translatePage).mockRejectedValueOnce(error);
 
-    const orchestrator = new TranslationOrchestrator(mockProvider, mockAdapter, mockRenderer);
+      const orchestrator = new TranslationOrchestrator(mockProvider, mockAdapter, mockRenderer);
 
-    const onErrorHandler = vi.fn();
+      const onErrorHandler = vi.fn();
 
-    // First try (fails)
-    await orchestrator.translateNext({ onError: onErrorHandler });
-    // wait for rejection
-    await new Promise((r) => setTimeout(r, 0));
+      // First try (fails)
+      await orchestrator.translateNext({ onError: onErrorHandler });
+      // wait for rejection
+      await new Promise((r) => setTimeout(r, 0));
 
-    expect(orchestrator.getState().get('img-1')?.status).toBe('failed');
-    expect(onErrorHandler).toHaveBeenCalledWith(
-      'img-1',
-      expect.objectContaining({ message: 'Translation failed at provider stage' })
-    );
+      expect(orchestrator.getState().get('img-1')?.status).toBe('failed');
+      expect(onErrorHandler).toHaveBeenCalledWith(
+        'img-1',
+        expect.objectContaining({ message: 'Translation failed at provider stage' })
+      );
 
-    // Mock success for retry
-    const result: TranslationResult = {
-      pageId: 'page-1',
-      imageId: 'img-1',
-      sourceLanguage: 'ja',
-      targetLanguage: 'id',
-      bubbles: [],
-    };
-    vi.mocked(mockProvider.translatePage).mockResolvedValueOnce(result);
+      // Mock success for retry
+      const result: TranslationResult = {
+        pageId: 'page-1',
+        imageId: 'img-1',
+        sourceLanguage: 'ja',
+        targetLanguage: 'id',
+        bubbles: [],
+      };
+      vi.mocked(mockProvider.translatePage).mockResolvedValueOnce(result);
 
-    // Retry
-    await orchestrator.retry('img-1');
-    // Wait for resolution
-    await new Promise((r) => setTimeout(r, 0));
+      // Retry
+      if (action === 'retry') {
+        await orchestrator.retry('img-1');
+      } else {
+        await orchestrator.translateNext();
+      }
+      // Wait for resolution
+      await new Promise((r) => setTimeout(r, 0));
 
-    expect(orchestrator.getState().get('img-1')?.status).toBe('completed');
-    expect(mockRenderer.render).toHaveBeenCalledWith(result);
-  });
+      expect(orchestrator.getState().get('img-1')?.status).toBe('completed');
+      expect(mockRenderer.render).toHaveBeenCalledWith(result);
+    }
+  );
 
   it('handles at least three consecutive manga images without manual state manipulation', async () => {
     const images: MangaImage[] = [

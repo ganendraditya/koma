@@ -196,7 +196,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       const idx = (nearestIndex + i) % sortedImages.length;
       const candidate = sortedImages[idx];
       const state = this.stateMap.get(candidate.id);
-      if (state && state.status === 'idle') {
+      if (state && (state.status === 'idle' || state.status === 'failed')) {
         targetImage = candidate;
         break;
       }

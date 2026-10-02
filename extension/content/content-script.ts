@@ -16,7 +16,7 @@ import {
   type TranslationProgressEvent,
 } from '@shared';
 import { ContextManager, ContextAwareProvider, type IContextManager } from '@core/context';
-import { KomaTranslationCache } from '@core/cache';
+import { CachedTranslationProvider, KomaTranslationCache } from '@core/cache';
 import { TranslationOrchestrator, type ITranslationOrchestrator } from '@core/orchestrator';
 import { DOMOverlayRenderer } from '@core/renderer';
 import { GeminiTranslationProvider } from '@providers/gemini/provider';
@@ -75,7 +75,8 @@ export function getOrCreateOrchestrator(
       modelName,
     });
 
-    const contextAwareProvider = new ContextAwareProvider(baseProvider, contextManager);
+    const cachedProvider = new CachedTranslationProvider(baseProvider, cache);
+    const contextAwareProvider = new ContextAwareProvider(cachedProvider, contextManager);
 
     activeOrchestrator = new TranslationOrchestrator(
       contextAwareProvider,
@@ -86,7 +87,6 @@ export function getOrCreateOrchestrator(
         },
       },
       {
-        cache,
         targetLanguage,
         concurrencyLimit: 1,
         lookAheadCount: 2,
