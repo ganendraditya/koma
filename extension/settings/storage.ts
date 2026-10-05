@@ -120,12 +120,8 @@ export async function getProviderSettings(): Promise<ProviderSettings> {
   return settings;
 }
 
-export async function saveProviderSettings(
-  profile: ProviderConfig,
-  targetLanguage: string
-): Promise<ProviderSettings> {
+function normalizeProfile(profile: ProviderConfig): ProviderConfig {
   if (!providerIds.includes(profile.provider)) throw new Error('Select a supported provider.');
-  if (!['id', 'en'].includes(targetLanguage)) throw new Error('Select Indonesian or English.');
   if (!profile.modelName.trim()) throw new Error('Enter a vision-capable model ID.');
   if (
     !['responses', 'chat-completions'].includes(profile.apiFormat) ||
@@ -152,8 +148,18 @@ export async function saveProviderSettings(
     normalized.apiFormat = 'responses';
     resolveReasoningEffort(normalized.modelName, normalized.reasoningEffort, false);
   }
+  return normalized;
+}
+
+export async function saveProviderSettings(
+  profile: ProviderConfig,
+  targetLanguage: string,
+  draftProfiles: ProviderConfig[] = []
+): Promise<ProviderSettings> {
+  if (!['id', 'en'].includes(targetLanguage)) throw new Error('Select Indonesian or English.');
+  const profiles = [...draftProfiles, profile].map(normalizeProfile);
   const settings = await getProviderSettings();
-  settings.profiles[profile.provider] = normalized;
+  for (const normalized of profiles) settings.profiles[normalized.provider] = normalized;
   settings.provider = profile.provider;
   settings.targetLanguage = targetLanguage;
   settings.revision++;

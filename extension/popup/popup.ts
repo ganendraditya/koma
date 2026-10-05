@@ -59,6 +59,7 @@ export async function initializePopup(): Promise<void> {
   let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let settings: ProviderSettings | undefined;
   let selectedProvider: ProviderId = 'gemini';
+  const editedProviders = new Set<ProviderId>();
 
   function showFeedback(text: string, type: 'success' | 'error', duration = 2500): void {
     if (!feedbackEl) {
@@ -213,7 +214,16 @@ export async function initializePopup(): Promise<void> {
 
   providerSelect.addEventListener('change', () => {
     if (!settings) return;
-    settings.profiles[selectedProvider] = readProfile();
+    const profile = readProfile();
+    const previousProfile = settings.profiles[selectedProvider];
+    if (
+      Object.entries(profile).some(
+        ([key, value]) => value !== previousProfile[key as keyof ProviderConfig]
+      )
+    ) {
+      editedProviders.add(selectedProvider);
+    }
+    settings.profiles[selectedProvider] = profile;
     selectedProvider = providerSelect.value as ProviderId;
     showProfile();
   });
@@ -380,8 +390,14 @@ export async function initializePopup(): Promise<void> {
     showFeedback('Saving provider settings...', 'success', 0);
     try {
       const profile = readProfile();
-      if (profile.provider === 'openai-compatible') {
-        const url = new URL(normalizeBaseUrl(profile.baseUrl));
+      const drafts = [...editedProviders]
+        .filter((id) => id !== profile.provider)
+        .map((id) => settings!.profiles[id]);
+      const customProfile = [profile, ...drafts].find(
+        (draft) => draft.provider === 'openai-compatible'
+      );
+      if (customProfile) {
+        const url = new URL(normalizeBaseUrl(customProfile.baseUrl));
         // Request inside the click handler, before awaiting storage, to preserve the user gesture.
         const granted = await chrome.permissions.request({
           origins: [`${url.protocol}//${url.hostname}/*`],
@@ -389,7 +405,8 @@ export async function initializePopup(): Promise<void> {
         if (!granted)
           throw new Error('Endpoint access was not granted. Save again to allow access.');
       }
-      settings = await saveProviderSettings(profile, targetLangSelect.value);
+      settings = await saveProviderSettings(profile, targetLangSelect.value, drafts);
+      editedProviders.clear();
       showProfile();
       updateKeyIndicator(Boolean(profile.apiKey), selectedProvider === 'openai-compatible');
       showFeedback('Provider settings saved.', 'success');

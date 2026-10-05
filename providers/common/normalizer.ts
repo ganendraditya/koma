@@ -25,6 +25,8 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function text(value: unknown, optional?: false): string;
+function text(value: unknown, optional: true): string | undefined;
 function text(value: unknown, optional = false): string | undefined {
   if (optional && (value === undefined || value === null)) return undefined;
   if (typeof value !== 'string') throw new Error('Expected text');
@@ -61,7 +63,6 @@ export function normalizeTranslationOutput(params: NormalizeParams): Translation
         throw new Error('Invalid bounding box');
       }
       const translatedText = text(raw.translated_text);
-      if (!translatedText) throw new Error('Empty translated text');
       if (
         raw.reading_order !== undefined &&
         (!Number.isInteger(raw.reading_order) || (raw.reading_order as number) < 0)

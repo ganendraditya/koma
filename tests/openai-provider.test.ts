@@ -255,9 +255,34 @@ describe('Reasoning model capabilities', () => {
 });
 
 describe('Translation output boundary', () => {
+  it.each(['', ' \n\t '])('keeps empty translations alongside other bubbles', (emptyText) => {
+    const result = normalizeTranslationOutput({
+      rawText: JSON.stringify({
+        bubbles: [
+          { box_2d: [100, 100, 200, 200], source_text: '...', translated_text: emptyText },
+          { box_2d: [120, 600, 240, 850], source_text: '待て！', translated_text: 'Wait!' },
+        ],
+      }),
+      imageId: 'img',
+      targetLanguage: 'en',
+      providerId: 'openai',
+    });
+
+    expect(result.bubbles).toHaveLength(2);
+    expect(result.bubbles[0]).toMatchObject({
+      sourceText: '...',
+      translatedText: '',
+      box: { ymin: 100, xmin: 100, ymax: 200, xmax: 200 },
+    });
+    expect(result.bubbles[1].translatedText).toBe('Wait!');
+    expect(validateTranslationResult(result).valid).toBe(true);
+  });
+
   it.each([
     { bubbles: [null] },
     { bubbles: [{ box_2d: [1, 2], translated_text: 'Wait' }] },
+    { bubbles: [{ box_2d: [1, 2, 3, 4] }] },
+    { bubbles: [{ box_2d: [1, 2, 3, 4], translated_text: null }] },
     { bubbles: [{ box_2d: [1, 2, 3, 4], translated_text: 123 }] },
     { bubbles: [], context_delta: { glossary_updates: 'bad' } },
   ])('rejects invalid model output with a typed error', (data) => {

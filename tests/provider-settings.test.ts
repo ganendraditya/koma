@@ -84,6 +84,25 @@ describe('Provider settings and BYOK storage', () => {
     expect((await getProviderSettings()).profiles.openai.apiKey).toBe('remembered-secret');
   });
 
+  it('validates every draft before persisting any provider changes', async () => {
+    const { local, session } = storage();
+    await saveProviderSettings(
+      { ...defaultProviderConfig('gemini'), apiKey: 'saved-secret' },
+      'id'
+    );
+    const before = await getProviderSettings();
+    const storedBefore = structuredClone({ local, session });
+
+    await expect(
+      saveProviderSettings({ ...defaultProviderConfig('openai'), apiKey: 'new-secret' }, 'en', [
+        { ...before.profiles.gemini, modelName: '' },
+      ])
+    ).rejects.toThrow(/model ID/);
+
+    expect(await getProviderSettings()).toEqual(before);
+    expect({ local, session }).toEqual(storedBefore);
+  });
+
   it('saves custom API paths and rejects invalid URLs before changing storage', async () => {
     storage();
     await saveProviderSettings(

@@ -60,7 +60,7 @@ afterEach(() => {
 });
 
 describe('Provider settings popup', () => {
-  it('switches provider drafts, restricts reasoning choices, and saves the selected session key', async () => {
+  it('switches provider drafts, restricts reasoning choices, and saves all edited session keys', async () => {
     const { local, session } = setup();
     await initializePopup();
     change('Gemini API key', 'gemini-draft');
@@ -93,8 +93,75 @@ describe('Provider settings popup', () => {
       modelName: 'o4-mini',
       reasoningEffort: 'auto',
     });
+    expect(settings.profiles.gemini.apiKey).toBe('gemini-draft');
     expect(JSON.stringify(local)).not.toContain('openai-draft');
+    expect(JSON.stringify(local)).not.toContain('gemini-draft');
     expect(JSON.stringify(session)).toContain('openai-draft');
+    expect(JSON.stringify(session)).toContain('gemini-draft');
+    change('Provider', 'gemini');
+    expect(field('Gemini API key').value).toBe('gemini-draft');
+  });
+
+  it('saves an edited custom endpoint from another provider after permission is granted', async () => {
+    const { request, local, session } = setup();
+    await initializePopup();
+    change('Provider', 'openai-compatible');
+    change('API base URL', 'http://localhost:1234/api/v1/');
+    change('Vision model ID', 'local-vision-model');
+    change('API key (optional for local servers)', 'custom-draft');
+    (field('Remember key') as HTMLInputElement).checked = true;
+    change('Provider', 'gemini');
+    change('Gemini API key', 'gemini-draft');
+    const before = await getProviderSettings();
+    request.mockResolvedValueOnce(false);
+
+    click('Save Settings');
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="status"]')?.textContent).toContain(
+        'access was not granted'
+      )
+    );
+    expect(await getProviderSettings()).toEqual(before);
+    expect(request).toHaveBeenCalledWith({ origins: ['http://localhost/*'] });
+
+    click('Save Settings');
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="status"]')?.textContent).toBe(
+        'Provider settings saved.'
+      )
+    );
+    const settings = await getProviderSettings();
+    expect(settings.provider).toBe('gemini');
+    expect(settings.revision).toBe(before.revision + 1);
+    expect(settings.profiles.gemini.apiKey).toBe('gemini-draft');
+    expect(settings.profiles['openai-compatible']).toMatchObject({
+      apiKey: 'custom-draft',
+      modelName: 'local-vision-model',
+      baseUrl: 'http://localhost:1234/api/v1',
+      rememberKey: true,
+    });
+    expect(JSON.stringify(local)).toContain('custom-draft');
+    expect(JSON.stringify(local)).not.toContain('gemini-draft');
+    expect(JSON.stringify(session)).toContain('gemini-draft');
+    expect(JSON.stringify(session)).not.toContain('custom-draft');
+    change('Provider', 'openai-compatible');
+    expect(field('API key (optional for local servers)').value).toBe('custom-draft');
+  });
+
+  it('ignores untouched custom-provider defaults when saving another provider', async () => {
+    const { request } = setup();
+    await initializePopup();
+    change('Provider', 'openai-compatible');
+    change('Provider', 'openai');
+    change('OpenAI API key', 'openai-draft');
+    click('Save Settings');
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="status"]')?.textContent).toBe(
+        'Provider settings saved.'
+      )
+    );
+    expect((await getProviderSettings()).profiles.openai.apiKey).toBe('openai-draft');
+    expect(request).not.toHaveBeenCalled();
   });
 
   it('requests only the custom endpoint host and reports denied permission without saving', async () => {
