@@ -45,6 +45,17 @@ New regression suites:
 
 Existing provider, renderer, context, cache, packaging and diagnostics regressions also passed. Signal-aware calls and cache-rebound page IDs are reflected in existing expectations.
 
+### PR #36 review follow-up
+
+Both review findings were confirmed and fixed on 2026-10-06:
+
+- Cache-equivalent requests share one provider task across different caller signals, including callers without a signal. Each caller can cancel its own wait immediately. The shared transport aborts when its last caller cancels, and a late response cannot start a cache write. A fresh retry does not join the cancelled task.
+- The popup's **Retry Pages** action retries failed pages in the current visible-plus-two window. Completed pages are skipped. Automatic viewport refreshes do not retry failures, but preserve reader-authorized retries queued during cooldown.
+
+The full suite passes with 239 tests across 21 files. Typecheck, lint, formatting, production build and `git diff --check` also pass. `tests/cache-cancellation.test.ts` covers shared requests, independent cancellation, late results and fresh retries. Reading-session tests cover upcoming failures, cooldown refreshes and failures outside the current window. The popup-to-worker test clicks Translate, observes an upcoming-page failure, then clicks Retry Pages without scrolling: provider requests increase from three to four and accepted overlays from two to three.
+
+This follow-up uses automated runtime/DOM tests. The Chrome observations below describe the original verification run and its earlier button label.
+
 ## Unpacked Chrome evidence
 
 Chrome for Testing **145.0.7632.6** ran the production bundle in a fresh visible profile. A controlled MangaDex-shaped Long Strip reader contained 12 loaded images. A loopback OpenAI-compatible endpoint returned deterministic translations, delayed responses and 429 errors. The actual toolbar popup was opened through `chrome.action.openPopup()` and operated with CDP mouse/keyboard input.

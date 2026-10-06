@@ -1,6 +1,6 @@
 # In-reader translation status
 
-KOMA-020, [issue #37](https://github.com/ganendraditya/koma/issues/37). Verified on 2026-10-06 on top of PR #36's `4b441f5` implementation.
+KOMA-020, [issue #37](https://github.com/ganendraditya/koma/issues/37). Verified on 2026-10-06 after resolving PR #38 against `main` (`0aa0a24`, including PR #36's review fixes).
 
 ## Requirement check
 
@@ -34,9 +34,11 @@ The new runtime regressions use real popup initialization, content handlers, wor
 
 `tests/adapter-content.test.ts` verifies on-reader configuration failure and absence of injected UI on unsupported pages.
 
-Required checks passed: typecheck, lint, formatting, **233 tests across 20 files**, production build and `git diff --check`.
+Conflict resolution preserved the shared-cache cancellation and upcoming-page retry fixes already merged in PR #36. The upcoming-page runtime regression now exercises both popup and reader retry: the visible page succeeds, an upcoming page fails, and explicit retry recovers that failure without scrolling or repeating accepted work. The reader's **Retry Pages** label and nearby-page guidance match this command.
 
-The CI pull-request trigger now includes dependent-branch targets, so this stacked PR receives the same checks before PR #36 merges.
+Required checks passed with Node 22: typecheck, lint, formatting, **246 tests across 21 files**, production build and `git diff --check`.
+
+The CI pull-request trigger includes all branch targets, so stacked PRs receive the same checks.
 
 ## Unpacked Chrome evidence
 
@@ -51,18 +53,18 @@ The original session/prefetch checks passed again. The new status scenarios expl
 | Hide Status, expand, keyboard Tab/Enter on Pause                        | Collapsed button names actual activity; expansion works; a 2 px outline marks Pause; transport aborts. Late release leaves the reader paused with no overlays. |       22 |
 | Reader Resume                                                           | Three accepted pages appear and feedback becomes “Pages ready”.                                                                                                |       25 |
 | Escape and expand again                                                 | Compact button reports completion; no additional provider call.                                                                                                |       25 |
-| Scroll, controlled 429 with `Retry-After: 2`                            | Remaining wait is visible, Retry Visible Page is disabled, and no early dispatch occurs. The other eligible pages finish after cooldown.                       |       28 |
-| Reader Retry Visible Page                                               | Failed page succeeds only after this action.                                                                                                                   |       29 |
+| Scroll, controlled 429 with `Retry-After: 2`                            | Remaining wait is visible, Retry Pages is disabled, and no early dispatch occurs. The other eligible pages finish after cooldown.                              |       28 |
+| Reader Retry Pages                                                      | Failed page succeeds only after this action.                                                                                                                   |       29 |
 | Scroll, controlled 401                                                  | API-key guidance appears while successfully translated pages remain usable.                                                                                    |       32 |
-| Reader Retry Visible Page                                               | Recovery updates counts and accepted-page feedback.                                                                                                            |       33 |
-| 320 px viewport, then 200% text with another controlled failure         | Panel spans x=12–308, width 296 px, with no horizontal overflow. Scaled error panel is 602 px tall, fits y=106–708, and retry is reachable.                    |       36 |
+| Reader Retry Pages                                                      | Recovery updates counts and accepted-page feedback.                                                                                                            |       33 |
+| 320 px viewport, then 200% text with another controlled failure         | Panel spans x=12–308, width 296 px, with no horizontal overflow. Scaled error panel is 644 px tall, fits y=64–708, and retry is reachable.                     |       36 |
 | Pause during another cooldown, then Resume                              | Secondary Pause works, no request starts while paused, and Resume respects the remaining deadline before the explicit retry completes.                         |       38 |
 | Host stylesheet tries to hide buttons/sections and change div placement | Reader controls remain visible; host remains fixed; panel retains `rgb(9, 13, 22)` background.                                                                 |       38 |
 | SPA chapter navigation                                                  | Panel is removed immediately.                                                                                                                                  |       38 |
 
 At 320 px, visible action targets were at least 44 px high and 101 px wide. At 200% text they were 60 px high. The controlled reader's document width remained 320 px in both checks. No uncaught page/popup errors were recorded.
 
-Probe, screenshots and machine-readable results are retained locally in the approved temporary `opencode/koma-reading-qa/` directory as `verify-status.mjs`, `reader-status-*.png` and `evidence-status.json`.
+Probe, screenshots, the post-resolution audit and machine-readable results are retained locally in the approved temporary `opencode/koma-pr38-qa/` directory as `verify-status.mjs`, `reader-status-*.png`, `anti-slop/audit-001-2026-10-06.md` and `evidence-status.json`.
 
 ## Antislop delivery gate
 
@@ -70,49 +72,49 @@ Design read: an in-reader translation status surface for manga readers, extendin
 
 The artwork remains the focal point. A compact corner panel groups state, recovery instructions and real counts; its full-width action is the focal point within the panel. One primary accent identifies the available reader action. Neutral surfaces maintain legibility against light/dark artwork, 8/12 px spacing groups related text, and native buttons with a 2 px focus ring support keyboard use. Text labels carry meaning without icons, illustrations or animation. Collapse reduces the footprint while preserving actual activity.
 
-| Item       | Status and evidence                                                                                                                                      |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R-01       | PASS: inherited translation accent only on the main reader action; solid neutral surfaces.                                                               |
-| R-02       | PASS: new UI copy and documentation use plain punctuation.                                                                                               |
-| R-03       | PASS: 320 px and 200% checks show no horizontal overflow; long content has a viewport-bounded vertical scroll path.                                      |
-| R-04       | PASS: action/state labels communicate directly, with no new decorative icons.                                                                            |
-| R-05       | PASS: composition follows state, explanation, actual counts and recovery.                                                                                |
-| R-06       | PASS: system font matches Koma controls and reflows with text size.                                                                                      |
-| R-07       | PASS: solid surface separates feedback from variable manga artwork.                                                                                      |
-| R-08       | PASS: direct action labels without decorative arrows.                                                                                                    |
-| R-09       | PASS: the compact label reports real activity, not a promotional badge.                                                                                  |
-| R-10       | PASS: solid surfaces with no backdrop blur.                                                                                                              |
-| R-11       | PASS: existing 8 px panel/6 px button geometry, no pill treatment.                                                                                       |
-| R-12       | PASS: fixed placement and one border establish the surface without repeated shadows.                                                                     |
-| R-13       | PASS: a visible outline marks focus, with no glow.                                                                                                       |
-| R-14       | PASS: one functional status surface, no feature-card grid.                                                                                               |
-| R-15       | PASS: Pause, Resume, Retry Visible Page, Hide Status and Show Status name real commands.                                                                 |
-| R-16       | PASS: text describes current reading work and recovery.                                                                                                  |
-| R-17       | PASS: counts/deadline come from the session; browser counts come from the controlled endpoint.                                                           |
-| R-18       | PASS: no testimonial/person content.                                                                                                                     |
-| R-19       | PASS: MOTION 1, hover/active feedback and no looping animation.                                                                                          |
-| R-20       | PASS: accepted pages, viewport work, overlay visibility and reader retries define this surface.                                                          |
-| R-21       | PASS: inherited subdued reader-control theme stays legible against both light and dark artwork.                                                          |
-| R-22       | PASS: real state text needs no illustration.                                                                                                             |
-| R-23       | PASS: reuses existing Koma colors/fonts; no new logo, avatar or invented data asset.                                                                     |
-| R-24       | PASS: real commands, no destination links.                                                                                                               |
-| R-25       | PASS: contrast checker measured primary text/accent at 4.75:1, secondary text/page at 7.58:1, disabled text/button at 6.69:1 and focus/button at 8.61:1. |
-| R-26       | PASS: recorded Hide/Show Status, Pause/Resume and explicit retry click-through.                                                                          |
-| R-27       | PASS: waiting, preparation, active, paused, completed, cooldown and error states covered by runtime tests.                                               |
-| R-28       | PASS: no FAQ in this reader surface.                                                                                                                     |
-| R-29       | PASS: inherited neutrals and one primary action accent.                                                                                                  |
-| R-30       | PASS: composition extends the existing Koma control style.                                                                                               |
-| R-31       | PASS: color, layout, font, spacing, controls and collapse reasons recorded above.                                                                        |
-| R-32       | PASS: Chrome keyboard Tab/Enter activates Pause with a 2 px focus outline; Escape collapses and expand works.                                            |
-| R-33       | PASS: TypeScript and CSS implemented directly in source files.                                                                                           |
-| R-34       | PASS: isolated fixed control theme survives hostile host styles.                                                                                         |
-| R-35       | PASS: production bundle, actual popup closed, recorded reader click-through and zero uncaught errors.                                                    |
-| R-36       | PASS: requirements, environment and measured outcomes have explicit sources.                                                                             |
-| R-37       | PASS: design read and 1/1/1 dials declared before implementation.                                                                                        |
-| R-38       | PASS: user-facing state describes implemented commands and actual session data.                                                                          |
-| Liveliness | PASS: explicit dials, artwork-first hierarchy, structured spacing, one action accent and repeated reader-command language.                               |
-| C-1        | PASS: visual/copy choices have written reasons.                                                                                                          |
-| C-2        | PASS: all reader buttons execute through the existing command path or collapse/expand.                                                                   |
-| C-3        | PASS: content exists to report translation and recover from failures.                                                                                    |
-| C-4        | PASS: empty/error/paused/loading states, keyboard, narrow width, zoom and isolated styling verified.                                                     |
-| C-5        | PASS: no invented metrics or quality claims; controlled-provider evidence identified.                                                                    |
+| Item       | Status and evidence                                                                                                                                                                     |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R-01       | PASS: inherited translation accent only on the main reader action; solid neutral surfaces.                                                                                              |
+| R-02       | PASS: new UI copy and documentation use plain punctuation.                                                                                                                              |
+| R-03       | PASS: 320 px and 200% checks show no horizontal overflow; long content has a viewport-bounded vertical scroll path.                                                                     |
+| R-04       | PASS: action/state labels communicate directly, with no new decorative icons.                                                                                                           |
+| R-05       | PASS: composition follows state, explanation, actual counts and recovery.                                                                                                               |
+| R-06       | PASS: system font matches Koma controls and reflows with text size.                                                                                                                     |
+| R-07       | PASS: solid surface separates feedback from variable manga artwork.                                                                                                                     |
+| R-08       | PASS: direct action labels without decorative arrows.                                                                                                                                   |
+| R-09       | PASS: the compact label reports real activity, not a promotional badge.                                                                                                                 |
+| R-10       | PASS: solid surfaces with no backdrop blur.                                                                                                                                             |
+| R-11       | PASS: existing 8 px panel/6 px button geometry, no pill treatment.                                                                                                                      |
+| R-12       | PASS: fixed placement and one border establish the surface without repeated shadows.                                                                                                    |
+| R-13       | PASS: a visible outline marks focus, with no glow.                                                                                                                                      |
+| R-14       | PASS: one functional status surface, no feature-card grid.                                                                                                                              |
+| R-15       | PASS: Pause, Resume, Retry Pages, Hide Status and Show Status name real commands; reader and popup both recover failed eligible pages.                                                  |
+| R-16       | PASS: text describes current reading work and recovery.                                                                                                                                 |
+| R-17       | PASS: counts/deadline come from the session; browser counts come from the controlled endpoint.                                                                                          |
+| R-18       | PASS: no testimonial/person content.                                                                                                                                                    |
+| R-19       | PASS: MOTION 1, hover/active feedback and no looping animation.                                                                                                                         |
+| R-20       | PASS: accepted pages, viewport work, overlay visibility and reader retries define this surface.                                                                                         |
+| R-21       | PASS: inherited subdued reader-control theme stays legible against both light and dark artwork.                                                                                         |
+| R-22       | PASS: real state text needs no illustration.                                                                                                                                            |
+| R-23       | PASS: reuses existing Koma colors/fonts; no new logo, avatar or invented data asset.                                                                                                    |
+| R-24       | PASS: real commands, no destination links.                                                                                                                                              |
+| R-25       | PASS: measured primary text/accent at 4.75:1, secondary text/panel at 7.58:1, disabled text/button at 6.69:1, action boundary/panel at 3.91:1 and offset focus outline/panel at 9.75:1. |
+| R-26       | PASS: recorded Hide/Show Status, Pause/Resume and explicit retry click-through.                                                                                                         |
+| R-27       | PASS: waiting, preparation, active, paused, completed, cooldown and error states covered by runtime tests.                                                                              |
+| R-28       | PASS: no FAQ in this reader surface.                                                                                                                                                    |
+| R-29       | PASS: inherited neutrals and one primary action accent.                                                                                                                                 |
+| R-30       | PASS: composition extends the existing Koma control style.                                                                                                                              |
+| R-31       | PASS: color, layout, font, spacing, controls and collapse reasons recorded above.                                                                                                       |
+| R-32       | PASS: Chrome keyboard Tab/Enter activates Pause with a 2 px focus outline; Escape collapses and expand works.                                                                           |
+| R-33       | PASS: TypeScript and CSS implemented directly in source files.                                                                                                                          |
+| R-34       | PASS: isolated fixed control theme survives hostile host styles.                                                                                                                        |
+| R-35       | PASS: production bundle, actual popup closed, recorded reader click-through and zero uncaught errors.                                                                                   |
+| R-36       | PASS: requirements, environment and measured outcomes have explicit sources.                                                                                                            |
+| R-37       | PASS: design read and 1/1/1 dials declared before implementation.                                                                                                                       |
+| R-38       | PASS: user-facing state describes implemented commands and actual session data.                                                                                                         |
+| Liveliness | PASS: explicit dials, artwork-first hierarchy, structured spacing, one action accent and repeated reader-command language.                                                              |
+| C-1        | PASS: visual/copy choices have written reasons.                                                                                                                                         |
+| C-2        | PASS: all reader buttons execute through the existing command path or collapse/expand.                                                                                                  |
+| C-3        | PASS: content exists to report translation and recover from failures.                                                                                                                   |
+| C-4        | PASS: empty/error/paused/loading states, keyboard, narrow width, zoom and isolated styling verified.                                                                                    |
+| C-5        | PASS: no invented metrics or quality claims; controlled-provider evidence identified.                                                                                                   |

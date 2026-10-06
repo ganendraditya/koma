@@ -185,6 +185,34 @@ describe('Popup to reader to worker session commands', () => {
     return button;
   };
 
+  it.each(['popup', 'reader'])(
+    'retries a failed upcoming page from the %s without scrolling or repeating completed work',
+    async (surface) => {
+      const { popup, click, ready, fetchFn, response } = await setup();
+      fetchFn
+        .mockResolvedValueOnce(response())
+        .mockResolvedValueOnce(new Response('Unavailable', { status: 503 }));
+      click('Translate');
+      await ready(2);
+      await vi.waitFor(() =>
+        expect(popup.getElementById('session-status')?.textContent).toContain('Use Retry Pages')
+      );
+      expect(fetchFn).toHaveBeenCalledTimes(3);
+      if (surface === 'reader') {
+        expect(readerText()).toBe('Translation needs attention');
+        expect(reader().querySelector('.details')?.textContent).toContain(
+          'Retry failed pages near your viewport'
+        );
+        readerButton('Retry Pages').click();
+      } else click('Retry Pages');
+      await ready(3);
+      expect(fetchFn).toHaveBeenCalledTimes(4);
+      await vi.waitFor(() =>
+        expect(popup.getElementById('session-status')?.textContent).toContain('3 pages ready')
+      );
+    }
+  );
+
   it('keeps reader feedback current without popup interaction and routes reader Pause/Resume through transport', async () => {
     const { click, ready, fetchFn, response, content, runtime, getRuntimeProviderConfig } =
       await setup();
@@ -263,16 +291,16 @@ describe('Popup to reader to worker session commands', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(readerText()).toBe('Rate limit reached');
       expect(reader().querySelector('.cooldown')?.textContent).toBe('Wait 3s before retrying.');
-      expect(readerButton('Retry Visible Page').disabled).toBe(true);
-      readerButton('Retry Visible Page').click();
+      expect(readerButton('Retry Pages').disabled).toBe(true);
+      readerButton('Retry Pages').click();
       await vi.advanceTimersByTimeAsync(2000);
       expect(fetchFn).toHaveBeenCalledTimes(1);
       expect(reader().querySelector('.cooldown')?.textContent).toBe('Wait 1s before retrying.');
       await vi.advanceTimersByTimeAsync(1000);
       expect(fetchFn).toHaveBeenCalledTimes(3);
       expect(readerText()).toBe('Translation needs attention');
-      expect(readerButton('Retry Visible Page').disabled).toBe(false);
-      readerButton('Retry Visible Page').click();
+      expect(readerButton('Retry Pages').disabled).toBe(false);
+      readerButton('Retry Pages').click();
       await vi.advanceTimersByTimeAsync(0);
       expect(readerText()).toBe('Pages ready');
       expect(fetchFn).toHaveBeenCalledTimes(4);
@@ -290,7 +318,7 @@ describe('Popup to reader to worker session commands', () => {
     await ready(2);
     await vi.waitFor(() => expect(readerText()).toBe('Translation needs attention'));
     expect(reader().querySelector('.details')?.textContent).toContain('Check your API key');
-    readerButton('Retry Visible Page').click();
+    readerButton('Retry Pages').click();
     await ready(3);
     await vi.waitFor(() => expect(readerText()).toBe('Pages ready'));
     expect(fetchFn).toHaveBeenCalledTimes(4);

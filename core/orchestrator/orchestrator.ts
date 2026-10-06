@@ -232,16 +232,11 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
         state.status === 'translating'
       )
         continue;
-      if (
-        state.status === 'failed' &&
-        !(retryFailed && offset === 0) &&
-        !previouslyQueued.has(image.id)
-      )
-        continue;
+      if (state.status === 'failed' && !retryFailed && !previouslyQueued.has(image.id)) continue;
       this.queue.enqueue({
         imageId: image.id,
         priority: offset,
-        source: offset === 0 ? 'user' : 'prefetch',
+        source: offset === 0 || (retryFailed && state.status === 'failed') ? 'user' : 'prefetch',
       });
       queued.push(image.id);
     }

@@ -86,7 +86,7 @@ An in-reader status panel keeps activity, ready/active/queued counts, errors and
 - **Pause** cancels pending image/provider work and clears the queue. Accepted translations stay available. **Resume** continues from your current viewport.
 - **Hide Overlays** shows the original artwork. **Show Overlays** restores accepted translations without another provider request. Translation can continue while overlays are hidden; use Pause to stop requests.
 - Hidden tabs stop dispatch and cancel active work. Returning to an enabled reader recalculates its window.
-- Failed pages require **Retry Visible Page**. Rate limits delay the remaining eligible queue according to `Retry-After`, or use a 30-second fallback. See [session verification and cooldown policy](docs/READING_SESSION_VERIFICATION.md).
+- Failed pages require **Retry Pages**, which retries failures in the visible-plus-two reading window. Rate limits delay the remaining eligible queue according to `Retry-After`, or use a 30-second fallback. See [session verification and cooldown policy](docs/READING_SESSION_VERIFICATION.md).
 
 ---
 

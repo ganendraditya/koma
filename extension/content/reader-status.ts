@@ -148,7 +148,7 @@ export class ReaderStatusView {
       : cooling
         ? 'Waiting before sending more pages. Failed pages need an explicit retry.'
         : state.error
-          ? `${state.error} Retry the visible page, or check Provider Settings in the Koma popup.`
+          ? `${state.error} Retry failed pages near your viewport, or check Provider Settings in the Koma popup.`
           : state.activeCount || state.queuedCount
             ? 'Working on the current reading window.'
             : state.acceptedCount
@@ -160,7 +160,7 @@ export class ReaderStatusView {
     this.countdown.hidden = !cooling;
     this.countdown.textContent = cooling ? `Wait ${remaining}s before retrying.` : '';
     this.currentAction = paused || state.error ? 'translate' : 'pause';
-    this.action.textContent = paused ? 'Resume' : state.error ? 'Retry Visible Page' : 'Pause';
+    this.action.textContent = paused ? 'Resume' : state.error ? 'Retry Pages' : 'Pause';
     this.action.disabled = cooling && this.currentAction === 'translate';
     this.pause.hidden =
       paused || !state.error || (!cooling && !state.activeCount && !state.queuedCount);
