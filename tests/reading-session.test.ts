@@ -70,6 +70,86 @@ function setup(options: OrchestratorOptions = {}) {
 afterEach(() => vi.useRealTimers());
 
 describe('Controlled reading session', () => {
+  it('retries failed upcoming pages on reader action without retranslating completed pages', async () => {
+    const { orchestrator, translate, result } = setup();
+    translate.mockImplementation(async (request) => {
+      if (request.image.id !== 'image-0') throw new Error('Network failed');
+      return result(request.image.id);
+    });
+    await orchestrator.translateNext();
+    await vi.waitFor(() => expect(orchestrator.getSessionState().status).toBe('failed'));
+    expect(orchestrator.getState().get('image-0')?.status).toBe('completed');
+    expect(orchestrator.getState().get('image-1')?.status).toBe('failed');
+    expect(orchestrator.getState().get('image-2')?.status).toBe('failed');
+    await orchestrator.translateVisible();
+    await orchestrator.prefetchUpcoming();
+    expect(translate).toHaveBeenCalledTimes(3);
+    translate.mockImplementation(async (request) => result(request.image.id));
+    expect(await orchestrator.translateNext()).toBe(true);
+    await vi.waitFor(() => expect(orchestrator.getSessionState().status).toBe('completed'));
+    expect(translate.mock.calls.map(([request]) => request.image.id)).toEqual([
+      'image-0',
+      'image-1',
+      'image-2',
+      'image-1',
+      'image-2',
+    ]);
+    expect(orchestrator.getSessionState().error).toBeUndefined();
+    orchestrator.dispose();
+  });
+
+  it('keeps reader-triggered upcoming retries queued through cooldown and viewport refresh', async () => {
+    vi.useFakeTimers();
+    const { orchestrator, translate } = setup();
+    translate
+      .mockResolvedValueOnce({
+        imageId: 'image-0',
+        pageId: 'page_0',
+        sourceLanguage: 'ja',
+        targetLanguage: 'en',
+        bubbles: [],
+      })
+      .mockRejectedValueOnce(new ProviderRateLimitError('Limited', 'test', 5));
+    await orchestrator.translateNext();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(translate).toHaveBeenCalledTimes(2);
+    expect(await orchestrator.translateNext()).toBe(true);
+    await orchestrator.translateVisible();
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(translate).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(translate.mock.calls.map(([request]) => request.image.id)).toEqual([
+      'image-0',
+      'image-1',
+      'image-1',
+      'image-2',
+    ]);
+    expect(orchestrator.getSessionState().status).toBe('completed');
+    orchestrator.dispose();
+  });
+
+  it('does not retry failures outside the current reading window', async () => {
+    const { orchestrator, translate, move } = setup();
+    translate.mockRejectedValueOnce(new Error('Network failed'));
+    await orchestrator.translateNext();
+    await vi.waitFor(() => expect(orchestrator.getSessionState().status).toBe('failed'));
+    move(8);
+    await orchestrator.translateNext();
+    await vi.waitFor(() =>
+      expect(orchestrator.getState().get('image-10')?.status).toBe('completed')
+    );
+    expect(orchestrator.getState().get('image-0')?.status).toBe('failed');
+    expect(translate.mock.calls.map(([request]) => request.image.id)).toEqual([
+      'image-0',
+      'image-1',
+      'image-2',
+      'image-8',
+      'image-9',
+      'image-10',
+    ]);
+    orchestrator.dispose();
+  });
+
   it.each([
     ['authentication', new ProviderAuthError('Check your key', 'test')],
     ['invalid output', new InvalidProviderResponseError('Invalid output', 'test')],

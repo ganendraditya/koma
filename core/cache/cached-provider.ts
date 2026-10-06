@@ -8,6 +8,12 @@ import { TranslationCache } from './types';
 import { generateCacheKey } from './key';
 import { logPipeline } from '../diagnostics';
 
+interface InFlightTranslation {
+  task: Promise<TranslationResult>;
+  controller: AbortController;
+  consumers: number;
+}
+
 function rebindResultToRequest(
   result: TranslationResult,
   request: TranslationRequest
@@ -29,8 +35,7 @@ export class CachedTranslationProvider implements TranslationProvider {
   public readonly cacheIdentity?: string;
   public readonly cache: TranslationCache;
   private readonly provider: TranslationProvider;
-  private readonly inFlight = new Map<string, Promise<TranslationResult>>();
-  private readonly inFlightSignals = new Map<string, AbortSignal | undefined>();
+  private readonly inFlight = new Map<string, InFlightTranslation>();
 
   constructor(provider: TranslationProvider, cache: TranslationCache) {
     this.provider = provider;
@@ -78,9 +83,9 @@ export class CachedTranslationProvider implements TranslationProvider {
     }
 
     const ongoing = this.inFlight.get(cacheKey);
-    if (ongoing && this.inFlightSignals.get(cacheKey) === signal) {
+    if (ongoing) {
       logPipeline('cache', 'in-flight');
-      const result = await ongoing;
+      const result = await this.waitForTask(cacheKey, ongoing, signal);
       signal?.throwIfAborted();
       return rebindResultToRequest(result, request);
     }
@@ -94,18 +99,17 @@ export class CachedTranslationProvider implements TranslationProvider {
     logPipeline('cache', 'miss');
 
     const ongoingAfterCache = this.inFlight.get(cacheKey);
-    if (ongoingAfterCache && this.inFlightSignals.get(cacheKey) === signal) {
+    if (ongoingAfterCache) {
       logPipeline('cache', 'in-flight');
-      const result = await ongoingAfterCache;
+      const result = await this.waitForTask(cacheKey, ongoingAfterCache, signal);
       signal?.throwIfAborted();
       return rebindResultToRequest(result, request);
     }
 
+    const controller = new AbortController();
     const execute = async (): Promise<TranslationResult> => {
-      const result = await (signal
-        ? this.provider.translatePage(request, signal)
-        : this.provider.translatePage(request));
-      signal?.throwIfAborted();
+      const result = await this.provider.translatePage(request, controller.signal);
+      controller.signal.throwIfAborted();
       try {
         await this.cache.set(cacheKey, result);
       } catch {
@@ -115,17 +119,53 @@ export class CachedTranslationProvider implements TranslationProvider {
     };
 
     const task = execute().finally(() => {
-      if (this.inFlight.get(cacheKey) === task) {
+      if (this.inFlight.get(cacheKey) === entry) {
         this.inFlight.delete(cacheKey);
-        this.inFlightSignals.delete(cacheKey);
       }
     });
 
-    this.inFlight.set(cacheKey, task);
-    this.inFlightSignals.set(cacheKey, signal);
-    const result = await task;
+    const entry = { task, controller, consumers: 0 };
+    this.inFlight.set(cacheKey, entry);
+    const result = await this.waitForTask(cacheKey, entry, signal);
     signal?.throwIfAborted();
     return rebindResultToRequest(result, request);
+  }
+
+  private waitForTask(
+    cacheKey: string,
+    entry: InFlightTranslation,
+    signal?: AbortSignal
+  ): Promise<TranslationResult> {
+    entry.consumers++;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const release = (): boolean => {
+        if (settled) return false;
+        settled = true;
+        signal?.removeEventListener('abort', onAbort);
+        entry.consumers--;
+        return true;
+      };
+      const onAbort = (): void => {
+        if (!release()) return;
+        reject(signal?.reason);
+        // Shared transport belongs to all callers, not to the first caller's signal.
+        if (entry.consumers === 0) {
+          if (this.inFlight.get(cacheKey) === entry) this.inFlight.delete(cacheKey);
+          entry.controller.abort(signal?.reason);
+        }
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      entry.task.then(
+        (result) => {
+          if (release()) resolve(result);
+        },
+        (error) => {
+          if (release()) reject(error);
+        }
+      );
+      if (signal?.aborted) onAbort();
+    });
   }
 
   async clearCache(): Promise<void> {

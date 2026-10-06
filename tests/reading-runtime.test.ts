@@ -173,6 +173,25 @@ async function setup() {
 }
 
 describe('Popup to reader to worker session commands', () => {
+  it('retries a failed upcoming page from the popup without scrolling or repeating completed work', async () => {
+    const { popup, click, ready, fetchFn, response } = await setup();
+    fetchFn
+      .mockResolvedValueOnce(response())
+      .mockResolvedValueOnce(new Response('Unavailable', { status: 503 }));
+    click('Translate');
+    await ready(2);
+    await vi.waitFor(() =>
+      expect(popup.getElementById('session-status')?.textContent).toContain('Use Retry Pages')
+    );
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    click('Retry Pages');
+    await ready(3);
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+    await vi.waitFor(() =>
+      expect(popup.getElementById('session-status')?.textContent).toContain('3 pages ready')
+    );
+  });
+
   it.each(['settings', 'navigation', 'SPA navigation', 'teardown'])(
     'rejects delayed results after %s replaces the session',
     async (action) => {

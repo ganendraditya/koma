@@ -73,7 +73,7 @@ export async function initializePopup(root: Document = globalThis.document): Pro
     session = state;
     translateBtn.disabled = !supported;
     translateBtn.textContent =
-      state?.status === 'paused' ? 'Resume' : state?.error ? 'Retry Visible Page' : 'Translate';
+      state?.status === 'paused' ? 'Resume' : state?.error ? 'Retry Pages' : 'Translate';
     if (pauseBtn)
       pauseBtn.disabled =
         !supported || !state || state.status === 'idle' || state.status === 'paused';
@@ -91,9 +91,9 @@ export async function initializePopup(root: Document = globalThis.document): Pro
         : state.status === 'paused'
           ? 'Paused. Resume to continue; accepted translations are kept.'
           : state.cooldownUntil
-            ? `Rate limited. Requests wait until ${new Date(state.cooldownUntil).toLocaleTimeString()}. Retry the failed page when ready.`
+            ? `Rate limited. Requests wait until ${new Date(state.cooldownUntil).toLocaleTimeString()}. Retry failed pages when ready.`
             : state.error
-              ? `${state.error} Use Retry Visible Page to try again.`
+              ? `${state.error} Use Retry Pages to retry failures in the current reading window.`
               : state.status === 'active'
                 ? `Translating. ${state.acceptedCount} pages ready.`
                 : `${state.acceptedCount} pages ready. Scroll to continue.`;
