@@ -15,6 +15,8 @@ import {
   type TranslateActivePageResponse,
   type TranslationProgressEvent,
   type ProviderRuntimeConfig,
+  type ReadingSessionResponse,
+  type SetOverlayVisibilityRequest,
 } from '@shared';
 import { ContextManager, ContextAwareProvider, type IContextManager } from '@core/context';
 import { CachedTranslationProvider, KomaTranslationCache } from '@core/cache';
@@ -39,6 +41,88 @@ let activeProvider: ExtensionTranslationProvider | null = null;
 let currentContextManager: IContextManager | null = null;
 let currentRenderer: DOMOverlayRenderer | null = null;
 let currentCache: KomaTranslationCache | null = null;
+let currentChapterId: string | null = null;
+let currentTargetLanguage = '';
+let commandRevision = 0;
+let stopWatching: (() => void) | undefined;
+
+function notifySession(): void {
+  if (!activeOrchestrator || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
+  chrome.runtime.sendMessage(
+    {
+      type: EXTENSION_MESSAGE_TYPES.READING_SESSION_CHANGED,
+      session: activeOrchestrator.getSessionState(),
+    },
+    () => {
+      void chrome.runtime.lastError;
+    }
+  );
+}
+
+function disposeSession(): void {
+  commandRevision++;
+  stopWatching?.();
+  stopWatching = undefined;
+  activeOrchestrator?.dispose();
+  activeProvider?.cancel();
+  activeOrchestrator = null;
+  activeProvider = null;
+}
+
+function watchReader(): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const refresh = () => {
+    timer = undefined;
+    if (!activeOrchestrator) return;
+    if (adapter.getChapterId() !== currentChapterId) {
+      disposeSession();
+      currentContextManager?.reset();
+      currentRenderer?.removeAllOverlays();
+      return;
+    }
+    activeOrchestrator.setPageVisible(!document.hidden);
+    if (activeOrchestrator.isTranslationEnabled() && !document.hidden) {
+      void activeOrchestrator.translateVisible?.();
+    }
+  };
+  const schedule = () => {
+    if (adapter.getChapterId() !== currentChapterId) {
+      refresh();
+      return;
+    }
+    if (!timer) timer = setTimeout(refresh, 50);
+  };
+  const visibility = () => {
+    activeOrchestrator?.setPageVisible(!document.hidden);
+    schedule();
+  };
+  const navigation = (window as Window & { navigation?: EventTarget }).navigation;
+  const navigate = (event: Event) => {
+    const destination = (event as Event & { destination?: { url: string } }).destination;
+    if (destination && adapter.getChapterId(destination.url) !== currentChapterId) {
+      disposeSession();
+      currentContextManager?.reset();
+      currentRenderer?.removeAllOverlays();
+    }
+  };
+  const stopAdapter = adapter.observeMangaImages(schedule);
+  window.addEventListener('scroll', schedule, { passive: true });
+  window.addEventListener('resize', schedule);
+  window.addEventListener('popstate', refresh);
+  document.addEventListener('visibilitychange', visibility);
+  navigation?.addEventListener('navigate', navigate);
+  stopWatching = () => {
+    clearTimeout(timer);
+    stopAdapter();
+    window.removeEventListener('scroll', schedule);
+    window.removeEventListener('resize', schedule);
+    window.removeEventListener('popstate', refresh);
+    document.removeEventListener('visibilitychange', visibility);
+    navigation?.removeEventListener('navigate', navigate);
+  };
+}
+
+if (typeof window !== 'undefined') window.addEventListener('pagehide', disposeSession);
 
 export function getOrCreateOrchestrator(
   config: ProviderRuntimeConfig,
@@ -58,17 +142,22 @@ export function getOrCreateOrchestrator(
     currentConfigSignature !== configSignature ||
     currentContextManager !== contextManager ||
     currentRenderer !== renderer ||
-    currentCache !== cache
+    currentCache !== cache ||
+    currentChapterId !== adapter.getChapterId()
   ) {
+    if (
+      (currentChapterId && currentChapterId !== adapter.getChapterId()) ||
+      (currentTargetLanguage && currentTargetLanguage !== config.targetLanguage)
+    )
+      contextManager.reset();
     currentConfigSignature = configSignature;
     currentContextManager = contextManager;
     currentRenderer = renderer;
     currentCache = cache;
+    currentChapterId = adapter.getChapterId();
+    currentTargetLanguage = config.targetLanguage;
 
-    if (activeOrchestrator) {
-      activeProvider?.cancel();
-      activeOrchestrator.reset();
-    }
+    disposeSession();
 
     const baseProvider = new ExtensionTranslationProvider(config);
     activeProvider = baseProvider;
@@ -83,6 +172,8 @@ export function getOrCreateOrchestrator(
         render: (result) => {
           renderer.render(result);
         },
+        removeAllOverlays: () => renderer.removeAllOverlays(),
+        hasOverlay: (imageId) => renderer.hasOverlay(imageId),
       },
       {
         targetLanguage: config.targetLanguage,
@@ -91,21 +182,11 @@ export function getOrCreateOrchestrator(
         prefetchEnabled: true,
       }
     );
+    activeOrchestrator.setPageVisible(!document.hidden);
+    watchReader();
   }
 
   return activeOrchestrator;
-}
-
-if (import.meta.env.MODE === 'development') {
-  const observe = () =>
-    adapter.observeMangaImages((images) => {
-      console.debug('[Koma] Detected manga images:', images.length);
-    });
-  let stopObserving = observe();
-  window.addEventListener('pagehide', () => stopObserving());
-  window.addEventListener('pageshow', (event) => {
-    if (event.persisted) stopObserving = observe();
-  });
 }
 
 export function handleContentScriptMessage(
@@ -122,9 +203,7 @@ export function handleContentScriptMessage(
   const req = message as { type?: string };
 
   if (req.type === EXTENSION_MESSAGE_TYPES.PROVIDER_SETTINGS_CHANGED) {
-    activeProvider?.cancel();
-    activeOrchestrator?.reset();
-    activeOrchestrator = null;
+    disposeSession();
     return false;
   }
 
@@ -135,9 +214,44 @@ export function handleContentScriptMessage(
       url: pageUrl,
       imageCount: adapter.detectMangaImages().length,
       isSupportedSite: adapter.matches(pageUrl),
+      session: activeOrchestrator?.getSessionState(),
     };
     sendResponse?.(response);
     return true;
+  }
+
+  if (req.type === EXTENSION_MESSAGE_TYPES.PAUSE_TRANSLATION) {
+    commandRevision++;
+    activeOrchestrator?.setTranslationEnabled(false);
+    notifySession();
+    sendResponse?.({
+      success: true,
+      session: activeOrchestrator?.getSessionState(),
+    } satisfies ReadingSessionResponse);
+    return false;
+  }
+
+  if (req.type === EXTENSION_MESSAGE_TYPES.SET_OVERLAY_VISIBILITY) {
+    const { visible } = req as SetOverlayVisibilityRequest;
+    if (typeof visible !== 'boolean') {
+      sendResponse?.({ success: false, error: 'Overlay visibility must be true or false.' });
+      return false;
+    }
+    try {
+      if (activeOrchestrator) activeOrchestrator.setOverlaysVisible(visible);
+      else if (!visible) renderer.removeAllOverlays();
+      notifySession();
+      sendResponse?.({
+        success: true,
+        session: activeOrchestrator?.getSessionState(),
+      } satisfies ReadingSessionResponse);
+    } catch {
+      sendResponse?.({
+        success: false,
+        error: 'Could not restore overlays. Return to the translated page and try again.',
+      });
+    }
+    return false;
   }
 
   if (req.type === EXTENSION_MESSAGE_TYPES.RUN_DIAGNOSTIC) {
@@ -190,8 +304,8 @@ export function handleContentScriptMessage(
   }
 
   if (req.type === EXTENSION_MESSAGE_TYPES.RESET_CONTEXT) {
+    disposeSession();
     contextManager.reset();
-    activeOrchestrator?.reset();
     const response: ResetContextResponse = { success: true, timestamp: Date.now() };
     sendResponse?.(response);
     return false;
@@ -208,6 +322,8 @@ export function handleContentScriptMessage(
     }
 
     const translateReq = req as TranslateActivePageRequest;
+    const revision = commandRevision;
+    const chapterId = adapter.getChapterId();
 
     (async () => {
       try {
@@ -221,6 +337,14 @@ export function handleContentScriptMessage(
             }
           );
         });
+        if (revision !== commandRevision || chapterId !== adapter.getChapterId()) {
+          sendResponse?.({
+            success: true,
+            started: false,
+            session: activeOrchestrator?.getSessionState(),
+          } satisfies TranslateActivePageResponse);
+          return;
+        }
         if (!config.configured) {
           sendResponse?.({
             success: false,
@@ -230,6 +354,7 @@ export function handleContentScriptMessage(
         }
 
         const orchestrator = getOrCreateOrchestrator(config, contextManager, renderer);
+        orchestrator.setTranslationEnabled(true);
 
         const notifyProgress = (event: TranslationProgressEvent) => {
           if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
@@ -240,6 +365,7 @@ export function handleContentScriptMessage(
         };
 
         const eventHandler = {
+          onSessionChange: notifySession,
           onProgress: (state: {
             imageId: string;
             status: 'idle' | 'translating' | 'completed' | 'failed';
@@ -279,6 +405,7 @@ export function handleContentScriptMessage(
         sendResponse?.({
           success: true,
           started,
+          session: orchestrator.getSessionState(),
         } satisfies TranslateActivePageResponse);
       } catch (err) {
         sendResponse?.({
@@ -312,7 +439,8 @@ export function handleContentScriptMessage(
 
   if (req.type === EXTENSION_MESSAGE_TYPES.CLEAR_ALL_OVERLAYS) {
     try {
-      renderer.removeAllOverlays();
+      if (activeOrchestrator) activeOrchestrator.setOverlaysVisible(false);
+      else renderer.removeAllOverlays();
       sendResponse?.({ success: true });
     } catch (err) {
       sendResponse?.({

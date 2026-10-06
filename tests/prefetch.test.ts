@@ -384,19 +384,24 @@ describe('Look-Ahead Translation Prefetch (KOMA-011)', () => {
 
       // img-1 was translated via provider
       expect(mockProvider.translatePage).toHaveBeenCalledWith(
-        expect.objectContaining({ image: images[0] })
+        expect.objectContaining({ image: images[0] }),
+        expect.any(AbortSignal)
       );
 
       // img-2 was already cached -> provider work was NOT queued for img-2
       expect(mockProvider.translatePage).not.toHaveBeenCalledWith(
-        expect.objectContaining({ image: images[1] })
+        expect.objectContaining({ image: images[1] }),
+        expect.any(AbortSignal)
       );
       expect(mockProvider.translatePage).toHaveBeenCalledTimes(1);
 
       // img-2 state is completed with the cached result and rendered
       expect(orchestrator.getState().get('img-2')?.status).toBe('completed');
-      expect(orchestrator.getState().get('img-2')?.result).toEqual(cachedResultImg2);
-      expect(mockRenderer.render).toHaveBeenCalledWith(cachedResultImg2);
+      expect(orchestrator.getState().get('img-2')?.result).toEqual({
+        ...cachedResultImg2,
+        pageId: 'page_1',
+      });
+      expect(mockRenderer.render).toHaveBeenCalledWith({ ...cachedResultImg2, pageId: 'page_1' });
     });
 
     it('upgrades queue priority when upcoming image gets closer to viewport', async () => {

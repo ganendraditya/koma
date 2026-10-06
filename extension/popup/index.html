@@ -25,6 +25,10 @@
         box-sizing: border-box;
       }
 
+      html {
+        min-width: 320px;
+      }
+
       body {
         margin: 0;
         padding: 16px;
@@ -378,7 +382,9 @@
     <div class="card">
       <div class="status-row">
         <span>Status</span>
-        <span class="status-value" id="status-text">Checking...</span>
+        <span class="status-value" id="status-text" role="status" aria-live="polite"
+          >Checking...</span
+        >
       </div>
       <div class="status-row">
         <span>Target Site</span>
@@ -391,7 +397,14 @@
     </div>
 
     <div class="action-stack">
-      <button id="btn-translate" class="btn btn-primary">Translate Current Page</button>
+      <button id="btn-translate" class="btn btn-primary" disabled>Translate</button>
+      <button id="btn-pause" class="btn btn-secondary" disabled>Pause</button>
+      <button id="btn-overlays" class="btn btn-secondary" aria-pressed="false" disabled>
+        Hide Overlays
+      </button>
+      <p id="session-status" class="form-help" role="status" aria-live="polite">
+        Checking reader session...
+      </p>
       <button id="btn-diagnostic" class="btn btn-secondary">Run Diagnostics</button>
     </div>
 

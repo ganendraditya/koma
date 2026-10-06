@@ -62,7 +62,11 @@ export class ExtensionTranslationProvider implements TranslationProvider {
     for (const cancel of this.pending) cancel();
   }
 
-  async translatePage(request: TranslationRequest): Promise<TranslationResult> {
+  async translatePage(
+    request: TranslationRequest,
+    signal?: AbortSignal
+  ): Promise<TranslationResult> {
+    signal?.throwIfAborted();
     if (this.cancelled)
       throw new ProviderError(
         'Provider settings changed. Press Translate again.',
@@ -72,6 +76,7 @@ export class ExtensionTranslationProvider implements TranslationProvider {
     const timeoutMs = request.options?.timeoutMs ?? 120000;
     const controller = new AbortController();
     const cancelLoad = () => controller.abort();
+    signal?.addEventListener('abort', cancelLoad, { once: true });
     this.pending.add(cancelLoad);
     const loadTimeout = setTimeout(cancelLoad, timeoutMs);
     const start = performance.now();
@@ -79,6 +84,7 @@ export class ExtensionTranslationProvider implements TranslationProvider {
     try {
       image = await loadImageData(request.image, this.id, undefined, controller.signal);
     } catch (error) {
+      signal?.throwIfAborted();
       if (controller.signal.aborted)
         throw new ProviderTimeoutError(
           'Image loading timed out or was cancelled.',
@@ -89,7 +95,9 @@ export class ExtensionTranslationProvider implements TranslationProvider {
     } finally {
       clearTimeout(loadTimeout);
       this.pending.delete(cancelLoad);
+      signal?.removeEventListener('abort', cancelLoad);
     }
+    signal?.throwIfAborted();
     if (this.cancelled)
       throw new ProviderError(
         'Provider settings changed. Press Translate again.',
@@ -106,6 +114,7 @@ export class ExtensionTranslationProvider implements TranslationProvider {
         clearInterval(keepAlive);
         clearTimeout(deadline);
         this.pending.delete(cancel);
+        signal?.removeEventListener('abort', cancelRequest);
         port.disconnect();
         if (error) reject(error);
         else resolve(result!);
@@ -118,6 +127,7 @@ export class ExtensionTranslationProvider implements TranslationProvider {
             this.id
           )
         );
+      const cancelRequest = () => finish(new DOMException('Translation cancelled.', 'AbortError'));
       // Port messages reset MV3 idle timers; an open port alone does not.
       const keepAlive = setInterval(() => {
         try {
@@ -144,6 +154,7 @@ export class ExtensionTranslationProvider implements TranslationProvider {
         remaining + 1000
       );
       this.pending.add(cancel);
+      signal?.addEventListener('abort', cancelRequest, { once: true });
       port.onDisconnect.addListener(() => {
         void chrome.runtime.lastError;
         finish(
@@ -168,6 +179,10 @@ export class ExtensionTranslationProvider implements TranslationProvider {
         finish(undefined, response.result);
       });
       try {
+        if (signal?.aborted) {
+          cancelRequest();
+          return;
+        }
         port.postMessage({
           type: EXTENSION_MESSAGE_TYPES.TRANSLATE_IMAGE,
           revision: this.config.revision,

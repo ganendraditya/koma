@@ -33,6 +33,7 @@ const result: TranslationResult = {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
@@ -182,6 +183,7 @@ describe('development pipeline diagnostics', () => {
   });
 
   it('keeps actionable provider error types and retry metadata without forwarding sensitive messages', async () => {
+    vi.useFakeTimers();
     const adapter: SiteAdapter = {
       name: 'test',
       matches: () => true,
@@ -205,6 +207,7 @@ describe('development pipeline diagnostics', () => {
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
     await orchestrator.retry(image.id, { onError });
     await orchestrator.retry(image.id, { onError });
+    await vi.advanceTimersByTimeAsync(15000);
 
     expect(onError.mock.calls[0][1]).toBeInstanceOf(ProviderAuthError);
     expect(onError.mock.calls[1][1]).toBeInstanceOf(ProviderRateLimitError);
@@ -217,6 +220,7 @@ describe('development pipeline diagnostics', () => {
         .map((value) => String(value))
         .join(' ')
     ).not.toContain('secret-key');
+    orchestrator.dispose();
   });
 
   it('logs a failed detection without a successful scan or total translation duration', async () => {

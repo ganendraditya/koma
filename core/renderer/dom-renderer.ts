@@ -161,7 +161,7 @@ export class DOMOverlayRenderer {
    * Checks whether overlays are currently active for the given image ID.
    */
   public hasOverlay(imageId: string): boolean {
-    return this.renderedOverlays.has(imageId);
+    return this.renderedOverlays.get(imageId)?.wrapperElement.isConnected ?? false;
   }
 
   /**

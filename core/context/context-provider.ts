@@ -32,7 +32,11 @@ export class ContextAwareProvider implements TranslationProvider {
     return this.innerProvider.capabilities();
   }
 
-  async translatePage(request: TranslationRequest): Promise<TranslationResult> {
+  async translatePage(
+    request: TranslationRequest,
+    signal?: AbortSignal
+  ): Promise<TranslationResult> {
+    signal?.throwIfAborted();
     // Supply current context memory unless caller provides an explicit override.
     const effectiveContext = request.context ?? this.contextManager.getPacket();
     const enrichedRequest: TranslationRequest = {
@@ -41,8 +45,11 @@ export class ContextAwareProvider implements TranslationProvider {
     };
 
     // Failures bubble up directly, ensuring failed runs never pollute context history.
-    const result = await this.innerProvider.translatePage(enrichedRequest);
+    const result = await (signal
+      ? this.innerProvider.translatePage(enrichedRequest, signal)
+      : this.innerProvider.translatePage(enrichedRequest));
 
+    signal?.throwIfAborted();
     this.contextManager.recordTranslation(result, request.image.pageIndex);
 
     return result;

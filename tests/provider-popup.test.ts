@@ -24,7 +24,7 @@ function setup() {
     tabs: {
       query: vi.fn().mockResolvedValue([{ id: 3, url: 'https://mangadex.org/chapter/test' }]),
       sendMessage: vi.fn((_id, _message, done) =>
-        done({ success: true, started: true, imageCount: 3 })
+        done({ success: true, started: true, imageCount: 3, isSupportedSite: true })
       ),
     },
   });
@@ -82,7 +82,7 @@ describe('Provider settings popup', () => {
     expect((field('OpenAI API key') as HTMLInputElement).type).toBe('password');
     click('Save Settings');
     await vi.waitFor(() =>
-      expect(document.querySelector('[role="status"]')?.textContent).toBe(
+      expect(document.getElementById('settings-feedback')?.textContent).toBe(
         'Provider settings saved.'
       )
     );
@@ -117,7 +117,7 @@ describe('Provider settings popup', () => {
 
     click('Save Settings');
     await vi.waitFor(() =>
-      expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      expect(document.getElementById('settings-feedback')?.textContent).toContain(
         'access was not granted'
       )
     );
@@ -126,7 +126,7 @@ describe('Provider settings popup', () => {
 
     click('Save Settings');
     await vi.waitFor(() =>
-      expect(document.querySelector('[role="status"]')?.textContent).toBe(
+      expect(document.getElementById('settings-feedback')?.textContent).toBe(
         'Provider settings saved.'
       )
     );
@@ -156,7 +156,7 @@ describe('Provider settings popup', () => {
     change('OpenAI API key', 'openai-draft');
     click('Save Settings');
     await vi.waitFor(() =>
-      expect(document.querySelector('[role="status"]')?.textContent).toBe(
+      expect(document.getElementById('settings-feedback')?.textContent).toBe(
         'Provider settings saved.'
       )
     );
@@ -173,7 +173,7 @@ describe('Provider settings popup', () => {
     request.mockResolvedValueOnce(false);
     click('Save Settings');
     await vi.waitFor(() =>
-      expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      expect(document.getElementById('settings-feedback')?.textContent).toContain(
         'access was not granted'
       )
     );
@@ -181,7 +181,7 @@ describe('Provider settings popup', () => {
     expect(request).toHaveBeenCalledWith({ origins: ['http://localhost/*'] });
     click('Save Settings');
     await vi.waitFor(() =>
-      expect(document.querySelector('[role="status"]')?.textContent).toBe(
+      expect(document.getElementById('settings-feedback')?.textContent).toBe(
         'Provider settings saved.'
       )
     );
@@ -195,9 +195,9 @@ describe('Provider settings popup', () => {
   it('opens missing-provider settings and keeps expansion state accessible', async () => {
     setup();
     await initializePopup();
-    click('Translate Current Page');
+    click('Translate');
     await vi.waitFor(() =>
-      expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      expect(document.getElementById('settings-feedback')?.textContent).toContain(
         'Configure your selected provider'
       )
     );
