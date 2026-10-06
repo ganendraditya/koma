@@ -30,6 +30,10 @@ export class MangaDexAdapter implements SiteAdapter {
     return parsed !== null && CHAPTER_PATH.test(parsed.pathname);
   }
 
+  getChapterId(url = this.getUrl()): string | null {
+    return readerUrl(url)?.pathname.match(CHAPTER_PATH)?.[1].toLowerCase() ?? null;
+  }
+
   detectMangaImages(): MangaImage[] {
     const pageUrl = readerUrl(this.getUrl());
     const chapterId = pageUrl?.pathname.match(CHAPTER_PATH)?.[1].toLowerCase();

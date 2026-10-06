@@ -11,9 +11,12 @@ import {
   CheckPageStatusResponse,
   DiagnosticReport,
   ResetContextResponse,
+  ReadingSessionResponse,
 } from '@shared/messages';
+import type { ReadingSessionState } from '@core/orchestrator/types';
 
-export async function initializePopup(): Promise<void> {
+export async function initializePopup(root: Document = globalThis.document): Promise<void> {
+  const document = root;
   const statusEl = document.getElementById('status-text') as HTMLElement;
   const siteEl = document.getElementById('site-text') as HTMLElement;
   const imageCountEl = document.getElementById('image-count-text') as HTMLElement;
@@ -21,6 +24,9 @@ export async function initializePopup(): Promise<void> {
 
   const translateBtn = document.getElementById('btn-translate') as HTMLButtonElement;
   const diagnosticBtn = document.getElementById('btn-diagnostic') as HTMLButtonElement;
+  const pauseBtn = document.getElementById('btn-pause') as HTMLButtonElement;
+  const overlaysBtn = document.getElementById('btn-overlays') as HTMLButtonElement;
+  const sessionEl = document.getElementById('session-status') as HTMLElement;
 
   const diagBox = document.getElementById('diagnostic-box') as HTMLElement;
   const diagTimeEl = document.getElementById('diagnostic-time') as HTMLElement;
@@ -60,6 +66,53 @@ export async function initializePopup(): Promise<void> {
   let settings: ProviderSettings | undefined;
   let selectedProvider: ProviderId = 'gemini';
   const editedProviders = new Set<ProviderId>();
+  let supported = false;
+  let session: ReadingSessionState | undefined;
+
+  function applySession(state?: ReadingSessionState): void {
+    session = state;
+    translateBtn.disabled = !supported;
+    translateBtn.textContent =
+      state?.status === 'paused' ? 'Resume' : state?.error ? 'Retry Visible Page' : 'Translate';
+    if (pauseBtn)
+      pauseBtn.disabled =
+        !supported || !state || state.status === 'idle' || state.status === 'paused';
+    if (overlaysBtn) {
+      overlaysBtn.disabled = !supported || !state?.acceptedCount;
+      overlaysBtn.textContent =
+        state?.overlaysVisible === false ? 'Show Overlays' : 'Hide Overlays';
+      overlaysBtn.setAttribute('aria-pressed', String(state?.overlaysVisible === false));
+    }
+    if (!sessionEl) return;
+    sessionEl.textContent = !supported
+      ? 'Open a supported MangaDex chapter to translate.'
+      : !state || state.status === 'idle'
+        ? 'Translate the visible page and up to two upcoming pages.'
+        : state.status === 'paused'
+          ? 'Paused. Resume to continue; accepted translations are kept.'
+          : state.cooldownUntil
+            ? `Rate limited. Requests wait until ${new Date(state.cooldownUntil).toLocaleTimeString()}. Retry the failed page when ready.`
+            : state.error
+              ? `${state.error} Use Retry Visible Page to try again.`
+              : state.status === 'active'
+                ? `Translating. ${state.acceptedCount} pages ready.`
+                : `${state.acceptedCount} pages ready. Scroll to continue.`;
+  }
+
+  function sessionCommand(message: object): void {
+    if (!activeTabId) return;
+    chrome.tabs.sendMessage(
+      activeTabId,
+      message,
+      (response: ReadingSessionResponse | undefined) => {
+        if (chrome.runtime.lastError || !response?.success) {
+          if (sessionEl)
+            sessionEl.textContent =
+              response?.error || 'Could not reach the reader. Reload the chapter and try again.';
+        } else applySession(response.session);
+      }
+    );
+  }
 
   function showFeedback(text: string, type: 'success' | 'error', duration = 2500): void {
     if (!feedbackEl) {
@@ -80,7 +133,10 @@ export async function initializePopup(): Promise<void> {
     }
   }
 
-  chrome.runtime.onMessage.addListener((message) => {
+  chrome.runtime.onMessage.addListener((message, sender) => {
+    if (sender.tab?.id !== undefined && sender.tab.id !== activeTabId) return;
+    if (message.type === EXTENSION_MESSAGE_TYPES.READING_SESSION_CHANGED)
+      applySession(message.session);
     if (message.type === EXTENSION_MESSAGE_TYPES.TRANSLATION_PROGRESS) {
       if (statusEl) {
         statusEl.textContent = `Image ${message.imageId}: ${message.status}`;
@@ -251,9 +307,12 @@ export async function initializePopup(): Promise<void> {
             if (chrome.runtime.lastError || !response) {
               if (statusEl) statusEl.textContent = 'Not active on page';
               if (imageCountEl) imageCountEl.textContent = 'N/A';
+              applySession();
             } else {
               if (statusEl) statusEl.textContent = 'Ready';
               if (imageCountEl) imageCountEl.textContent = `${response.imageCount} detected`;
+              supported = response.isSupportedSite === true;
+              applySession(response.session);
             }
           }
         );
@@ -349,7 +408,16 @@ export async function initializePopup(): Promise<void> {
       chrome.tabs.sendMessage(
         activeTabId,
         { type: EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE },
-        (response: { success?: boolean; error?: string; started?: boolean } | undefined) => {
+        (
+          response:
+            | {
+                success?: boolean;
+                error?: string;
+                started?: boolean;
+                session?: ReadingSessionState;
+              }
+            | undefined
+        ) => {
           if (chrome.runtime.lastError || !response?.success) {
             const err =
               chrome.runtime.lastError?.message || response?.error || 'Translation failed to start';
@@ -357,16 +425,29 @@ export async function initializePopup(): Promise<void> {
               statusEl.textContent = `Error: ${err}`;
               statusEl.style.color = 'var(--danger)';
             }
-          } else if (!response.started) {
-            if (statusEl) {
-              statusEl.textContent = 'No images pending translation';
-              statusEl.style.color = 'var(--text-secondary)';
+          } else {
+            applySession(response.session);
+            if (!response.started && response.session?.status !== 'paused') {
+              if (statusEl) {
+                statusEl.textContent = 'No images pending translation';
+                statusEl.style.color = 'var(--text-secondary)';
+              }
             }
           }
         }
       );
     }
   });
+
+  pauseBtn?.addEventListener('click', () =>
+    sessionCommand({ type: EXTENSION_MESSAGE_TYPES.PAUSE_TRANSLATION })
+  );
+  overlaysBtn?.addEventListener('click', () =>
+    sessionCommand({
+      type: EXTENSION_MESSAGE_TYPES.SET_OVERLAY_VISIBILITY,
+      visible: session?.overlaysVisible === false,
+    })
+  );
 
   toggleSettingsBtn?.addEventListener('click', () => {
     const isOpen = settingsPanel.classList.toggle('open');
@@ -410,6 +491,7 @@ export async function initializePopup(): Promise<void> {
       showProfile();
       updateKeyIndicator(Boolean(profile.apiKey), selectedProvider === 'openai-compatible');
       showFeedback('Provider settings saved.', 'success');
+      applySession();
     } catch (error) {
       showFeedback(
         `Save failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -440,4 +522,6 @@ export async function initializePopup(): Promise<void> {
   });
 }
 
-document.addEventListener('DOMContentLoaded', initializePopup);
+document.addEventListener('DOMContentLoaded', () => {
+  void initializePopup();
+});

@@ -1,4 +1,5 @@
 import type { ProviderCapabilities, TranslationRequest, TranslationResult } from '@core/contracts';
+import type { ReadingSessionState } from '@core/orchestrator/types';
 
 /**
  * Standard message types and payloads for Chrome extension inter-process communication.
@@ -10,6 +11,9 @@ export const EXTENSION_MESSAGE_TYPES = {
   RUN_DIAGNOSTIC: 'RUN_DIAGNOSTIC',
   TRANSLATE_ACTIVE_PAGE: 'TRANSLATE_ACTIVE_PAGE',
   TRANSLATION_PROGRESS: 'TRANSLATION_PROGRESS',
+  READING_SESSION_CHANGED: 'READING_SESSION_CHANGED',
+  PAUSE_TRANSLATION: 'PAUSE_TRANSLATION',
+  SET_OVERLAY_VISIBILITY: 'SET_OVERLAY_VISIBILITY',
   RESET_CONTEXT: 'RESET_CONTEXT',
   RENDER_TRANSLATION_OVERLAY: 'RENDER_TRANSLATION_OVERLAY',
   CLEAR_ALL_OVERLAYS: 'CLEAR_ALL_OVERLAYS',
@@ -40,6 +44,7 @@ export interface CheckPageStatusResponse {
   url: string;
   imageCount: number;
   isSupportedSite?: boolean;
+  session?: ReadingSessionState;
 }
 
 export interface RunDiagnosticRequest {
@@ -82,6 +87,27 @@ export interface TranslateActivePageResponse {
   success: boolean;
   error?: string;
   started?: boolean;
+  session?: ReadingSessionState;
+}
+
+export interface ReadingSessionResponse {
+  success: boolean;
+  session?: ReadingSessionState;
+  error?: string;
+}
+
+export interface PauseTranslationRequest {
+  type: typeof EXTENSION_MESSAGE_TYPES.PAUSE_TRANSLATION;
+}
+
+export interface SetOverlayVisibilityRequest {
+  type: typeof EXTENSION_MESSAGE_TYPES.SET_OVERLAY_VISIBILITY;
+  visible: boolean;
+}
+
+export interface ReadingSessionChangedEvent {
+  type: typeof EXTENSION_MESSAGE_TYPES.READING_SESSION_CHANGED;
+  session: ReadingSessionState;
 }
 
 export interface TranslationProgressEvent {
@@ -136,5 +162,7 @@ export type ExtensionRequest =
   | RunDiagnosticRequest
   | ResetContextRequest
   | TranslateActivePageRequest
+  | PauseTranslationRequest
+  | SetOverlayVisibilityRequest
   | RenderTranslationOverlayRequest
   | ClearAllOverlaysRequest;

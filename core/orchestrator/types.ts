@@ -4,6 +4,16 @@ import type { ImagePosition, ViewportRect } from './viewport';
 
 export type TranslationStatus = 'idle' | 'translating' | 'completed' | 'failed';
 
+export interface ReadingSessionState {
+  status: 'idle' | 'active' | 'paused' | 'completed' | 'failed';
+  overlaysVisible: boolean;
+  acceptedCount: number;
+  queuedCount: number;
+  activeCount: number;
+  cooldownUntil?: number;
+  error?: string;
+}
+
 export interface ImageTranslationState {
   imageId: string;
   status: TranslationStatus;
@@ -26,10 +36,13 @@ export interface OrchestratorOptions {
   positionResolver?: (image: MangaImage) => ImagePosition | null;
   /** Custom viewport provider */
   viewportProvider?: () => ViewportRect;
+  rateLimitCooldownMs?: number;
 }
 
 export interface IRenderer {
   render(result: TranslationResult): void;
+  removeAllOverlays?(): void;
+  hasOverlay?(imageId: string): boolean;
 }
 
 /**
@@ -39,9 +52,14 @@ export interface OrchestratorEventHandler {
   onProgress?: (state: ImageTranslationState) => void;
   onError?: (imageId: string, error: Error) => void;
   onComplete?: (imageId: string, result: TranslationResult) => void;
+  onSessionChange?: (state: ReadingSessionState) => void;
 }
 
 export interface ITranslationOrchestrator {
+  getSessionState(): ReadingSessionState;
+  setOverlaysVisible(visible: boolean): void;
+  setPageVisible(visible: boolean): void;
+  dispose(): void;
   /**
    * Triggers translation for the next untranslated image(s) on the page.
    * Prioritizes visible content and enqueues upcoming images if prefetching is enabled. Idempotent per image.

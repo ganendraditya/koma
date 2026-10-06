@@ -16,6 +16,7 @@ import { normalizeBaseUrl, type ApiFormat, type ResponseFormat } from '../config
 import { loadImageData } from '../common/image';
 import { buildTranslationPrompt, getTranslationResponseSchema } from '../common/prompt';
 import { normalizeTranslationOutput } from '../common/normalizer';
+import { parseRetryAfter } from '../common/retry-after';
 import { resolveReasoningEffort, type ReasoningEffort } from './models';
 
 export interface OpenAIProviderOptions {
@@ -271,17 +272,10 @@ export class OpenAITranslationProvider implements TranslationProvider {
         this.id
       );
     if (response.status === 429) {
-      const retry = response.headers.get('retry-after');
-      const seconds = retry ? Number(retry) : NaN;
-      const retryAfter = Number.isFinite(seconds)
-        ? Math.max(0, seconds)
-        : retry
-          ? Math.max(0, Math.ceil((Date.parse(retry) - Date.now()) / 1000))
-          : undefined;
       throw new ProviderRateLimitError(
         'API rate limit exceeded. Wait before retrying.',
         this.id,
-        Number.isFinite(retryAfter) ? retryAfter : undefined
+        parseRetryAfter(response.headers.get('retry-after'))
       );
     }
     const message =

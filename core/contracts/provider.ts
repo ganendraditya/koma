@@ -188,5 +188,5 @@ export interface TranslationProvider {
    *
    * @throws {KomaError} Standardized Koma error hierarchy on failure.
    */
-  translatePage(request: TranslationRequest): Promise<TranslationResult>;
+  translatePage(request: TranslationRequest, signal?: AbortSignal): Promise<TranslationResult>;
 }

@@ -76,6 +76,16 @@ Never commit `.env` files or API credentials. Koma supports Gemini, OpenAI, and 
 5. Select the `dist/` directory generated within the project root.
 6. The Koma extension will appear in the Chrome toolbar.
 
+### Reading controls
+
+Open a MangaDex chapter, configure and save your provider settings, then click **Translate**.
+Koma translates the page nearest the viewport and up to two upcoming loaded pages, one request at a time. Scrolling or loading more images updates that window.
+
+- **Pause** cancels pending image/provider work and clears the queue. Accepted translations stay available. **Resume** continues from your current viewport.
+- **Hide Overlays** shows the original artwork. **Show Overlays** restores accepted translations without another provider request. Translation can continue while overlays are hidden; use Pause to stop requests.
+- Hidden tabs stop dispatch and cancel active work. Returning to an enabled reader recalculates its window.
+- Failed pages require **Retry Visible Page**. Rate limits delay the remaining eligible queue according to `Retry-After`, or use a 30-second fallback. See [session verification and cooldown policy](docs/READING_SESSION_VERIFICATION.md).
+
 ---
 
 ## Architecture Principles

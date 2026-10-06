@@ -1,5 +1,7 @@
 # Sprint 1 smoke test
 
+For the session controls and bounded viewport scheduler introduced by KOMA-012/KOMA-013, see [reading-session verification](READING_SESSION_VERIFICATION.md). It records production-bundle toolbar-popup checks and provider-request counts.
+
 Build with `npm run dev` for pipeline timings, then load `dist/` through Chrome's **Load unpacked** and reload the reader tab. Open the content-script console and enable verbose/debug messages. Entries begin with `[Koma pipeline]`. They contain stage names, outcomes, and milliseconds, never image bytes, provider responses, or credentials. The provider request timer covers the Gemini HTTP request, including failed requests; normalization covers response mapping. `total: translation` measures provider and render work for a successfully translated image. It excludes adapter detection and queue wait time, which vary between new requests and retries. A cache `miss` alongside `total: translation` identifies a cold run. Detection scans and rendering log durations on success; a failed stage logs `failed`. Production builds suppress these entries.
 
 ## Reference pages

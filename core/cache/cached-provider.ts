@@ -30,6 +30,7 @@ export class CachedTranslationProvider implements TranslationProvider {
   public readonly cache: TranslationCache;
   private readonly provider: TranslationProvider;
   private readonly inFlight = new Map<string, Promise<TranslationResult>>();
+  private readonly inFlightSignals = new Map<string, AbortSignal | undefined>();
 
   constructor(provider: TranslationProvider, cache: TranslationCache) {
     this.provider = provider;
@@ -44,7 +45,11 @@ export class CachedTranslationProvider implements TranslationProvider {
     return this.provider.capabilities();
   }
 
-  async translatePage(request: TranslationRequest): Promise<TranslationResult> {
+  async translatePage(
+    request: TranslationRequest,
+    signal?: AbortSignal
+  ): Promise<TranslationResult> {
+    signal?.throwIfAborted();
     const modelId = request.options?.modelName || this.provider.modelName;
 
     const cacheKey = generateCacheKey({
@@ -60,7 +65,10 @@ export class CachedTranslationProvider implements TranslationProvider {
 
     if (request.options?.bypassCache) {
       logPipeline('cache', 'bypass');
-      const result = await this.provider.translatePage(request);
+      const result = await (signal
+        ? this.provider.translatePage(request, signal)
+        : this.provider.translatePage(request));
+      signal?.throwIfAborted();
       try {
         await this.cache.set(cacheKey, result);
       } catch {
@@ -70,13 +78,15 @@ export class CachedTranslationProvider implements TranslationProvider {
     }
 
     const ongoing = this.inFlight.get(cacheKey);
-    if (ongoing) {
+    if (ongoing && this.inFlightSignals.get(cacheKey) === signal) {
       logPipeline('cache', 'in-flight');
       const result = await ongoing;
+      signal?.throwIfAborted();
       return rebindResultToRequest(result, request);
     }
 
     const cached = await this.cache.get(cacheKey);
+    signal?.throwIfAborted();
     if (cached) {
       logPipeline('cache', 'hit');
       return rebindResultToRequest(cached, request);
@@ -84,14 +94,18 @@ export class CachedTranslationProvider implements TranslationProvider {
     logPipeline('cache', 'miss');
 
     const ongoingAfterCache = this.inFlight.get(cacheKey);
-    if (ongoingAfterCache) {
+    if (ongoingAfterCache && this.inFlightSignals.get(cacheKey) === signal) {
       logPipeline('cache', 'in-flight');
       const result = await ongoingAfterCache;
+      signal?.throwIfAborted();
       return rebindResultToRequest(result, request);
     }
 
     const execute = async (): Promise<TranslationResult> => {
-      const result = await this.provider.translatePage(request);
+      const result = await (signal
+        ? this.provider.translatePage(request, signal)
+        : this.provider.translatePage(request));
+      signal?.throwIfAborted();
       try {
         await this.cache.set(cacheKey, result);
       } catch {
@@ -103,11 +117,14 @@ export class CachedTranslationProvider implements TranslationProvider {
     const task = execute().finally(() => {
       if (this.inFlight.get(cacheKey) === task) {
         this.inFlight.delete(cacheKey);
+        this.inFlightSignals.delete(cacheKey);
       }
     });
 
     this.inFlight.set(cacheKey, task);
+    this.inFlightSignals.set(cacheKey, signal);
     const result = await task;
+    signal?.throwIfAborted();
     return rebindResultToRequest(result, request);
   }
 

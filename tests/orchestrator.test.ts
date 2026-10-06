@@ -53,10 +53,13 @@ describe('TranslationOrchestrator', () => {
 
     await orchestrator.translateNext();
 
-    expect(mockProvider.translatePage).toHaveBeenCalledWith({
-      image: images[0],
-      targetLanguage: 'id',
-    });
+    expect(mockProvider.translatePage).toHaveBeenCalledWith(
+      {
+        image: images[0],
+        targetLanguage: 'id',
+      },
+      expect.any(AbortSignal)
+    );
 
     // Resolve the promise to let processing complete
     resolveTranslation!(result);

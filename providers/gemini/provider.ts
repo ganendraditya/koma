@@ -15,6 +15,7 @@ import { GeminiRequestPayload, GeminiResponsePayload, DEFAULT_GEMINI_MODEL } fro
 import { buildGeminiSystemPrompt, getGeminiResponseSchema } from './prompt';
 import { normalizeGeminiResponse } from './normalizer';
 import { logPipeline } from '@core/diagnostics';
+import { parseRetryAfter } from '../common/retry-after';
 
 export interface GeminiProviderOptions {
   apiKey: string;
@@ -259,12 +260,10 @@ export class GeminiTranslationProvider implements TranslationProvider {
     }
 
     if (status === 429) {
-      const retryHeader = response.headers.get('retry-after');
-      const retrySec = retryHeader ? parseInt(retryHeader, 10) : 15;
       throw new ProviderRateLimitError(
-        'Gemini API rate limit exceeded (15 RPM on Free Tier). Please wait before trying again.',
+        'Gemini API rate limit exceeded. Wait before retrying.',
         this.id,
-        retrySec
+        parseRetryAfter(response.headers.get('retry-after'))
       );
     }
 
