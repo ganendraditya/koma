@@ -156,6 +156,8 @@ async function setup() {
       expect(document.querySelectorAll('[data-koma-bubble-text]')).toHaveLength(count)
     );
   return {
+    runtime,
+    getRuntimeProviderConfig,
     navigation,
     content,
     popup,
@@ -173,23 +175,192 @@ async function setup() {
 }
 
 describe('Popup to reader to worker session commands', () => {
-  it('retries a failed upcoming page from the popup without scrolling or repeating completed work', async () => {
-    const { popup, click, ready, fetchFn, response } = await setup();
-    fetchFn
-      .mockResolvedValueOnce(response())
-      .mockResolvedValueOnce(new Response('Unavailable', { status: 503 }));
+  const reader = () => document.querySelector('[data-koma-reader-status]')!.shadowRoot!;
+  const readerText = () => reader().querySelector('[role="status"]')!.textContent;
+  const readerButton = (label: string) => {
+    const button = [...reader().querySelectorAll('button')].find(
+      (node) => node.textContent?.trim() === label && !node.hidden
+    );
+    if (!button) throw new Error(`Missing reader control: ${label}`);
+    return button;
+  };
+
+  it.each(['popup', 'reader'])(
+    'retries a failed upcoming page from the %s without scrolling or repeating completed work',
+    async (surface) => {
+      const { popup, click, ready, fetchFn, response } = await setup();
+      fetchFn
+        .mockResolvedValueOnce(response())
+        .mockResolvedValueOnce(new Response('Unavailable', { status: 503 }));
+      click('Translate');
+      await ready(2);
+      await vi.waitFor(() =>
+        expect(popup.getElementById('session-status')?.textContent).toContain('Use Retry Pages')
+      );
+      expect(fetchFn).toHaveBeenCalledTimes(3);
+      if (surface === 'reader') {
+        expect(readerText()).toBe('Translation needs attention');
+        expect(reader().querySelector('.details')?.textContent).toContain(
+          'Retry failed pages near your viewport'
+        );
+        readerButton('Retry Pages').click();
+      } else click('Retry Pages');
+      await ready(3);
+      expect(fetchFn).toHaveBeenCalledTimes(4);
+      await vi.waitFor(() =>
+        expect(popup.getElementById('session-status')?.textContent).toContain('3 pages ready')
+      );
+    }
+  );
+
+  it('keeps reader feedback current without popup interaction and routes reader Pause/Resume through transport', async () => {
+    const { click, ready, fetchFn, response, content, runtime, getRuntimeProviderConfig } =
+      await setup();
+    expect(document.querySelector('[data-koma-reader-status]')).toBeNull();
+    let release!: (value: Response) => void;
+    let signal!: AbortSignal;
+    fetchFn.mockImplementationOnce((_url, init) => {
+      signal = init!.signal!;
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    let settings!: (value: unknown) => void;
+    runtime.sendMessage.mockImplementationOnce((_message, done) => {
+      settings = done;
+    });
+    click('Translate');
+    await vi.waitFor(() => expect(readerText()).toBe('Preparing translation'));
+    settings({ success: true, config: await getRuntimeProviderConfig() });
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1));
+    expect(readerText()).toBe('Translating pages');
+    expect(reader().querySelector('.counts')?.textContent).toBe(
+      '0 pages ready, 1 active, 2 queued'
+    );
+    readerButton('Hide Status').click();
+    const compact = readerButton('Koma: Translating pages');
+    expect(reader().querySelector('section')?.hidden).toBe(true);
+    expect(reader().activeElement).toBe(compact);
+    expect(compact.getAttribute('aria-label')).toContain('Show Status');
+    compact.click();
+    expect(reader().activeElement?.textContent).toBe('Hide Status');
+    readerButton('Pause').click();
+    expect(signal.aborted).toBe(true);
+    expect(readerText()).toBe('Translation paused');
+    release(response());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(readerText()).toBe('Translation paused');
+    expect(content.sessionContextManager.getDialogueCount()).toBe(0);
+    readerButton('Resume').click();
+    await ready(3);
+    await vi.waitFor(() => expect(readerText()).toBe('Pages ready'));
+    expect(reader().querySelector('.counts')?.textContent).toBe(
+      '3 pages ready, 0 active, 0 queued'
+    );
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+    readerButton('Hide Status').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true })
+    );
+    expect(reader().querySelector('section')?.hidden).toBe(true);
+    expect(readerButton('Koma: Pages ready').getAttribute('aria-expanded')).toBe('false');
+    expect(document.querySelectorAll('[data-koma-reader-status]')).toHaveLength(1);
+  });
+
+  it('reports waiting for images and updates when production observation sees them load', async () => {
+    const { click, ready, fetchFn, addImage, content } = await setup();
+    document.querySelector('.md--reader-pages')!.replaceChildren();
+    click('Translate');
+    await vi.waitFor(() => expect(readerText()).toBe('Waiting for manga images'));
+    expect(fetchFn).not.toHaveBeenCalled();
+    addImage(0);
+    await ready(1);
+    await vi.waitFor(() => expect(readerText()).toBe('Pages ready'));
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    content.handleContentScriptMessage({ type: EXTENSION_MESSAGE_TYPES.RESET_CONTEXT });
+    expect(document.querySelector('[data-koma-reader-status]')).toBeNull();
+  });
+
+  it('shows a real cooldown, blocks early retry and recovers only on explicit reader retry', async () => {
+    const { click, fetchFn } = await setup();
+    vi.useFakeTimers();
+    try {
+      fetchFn.mockResolvedValueOnce(
+        new Response('{}', { status: 429, headers: { 'Retry-After': '3' } })
+      );
+      click('Translate');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readerText()).toBe('Rate limit reached');
+      expect(reader().querySelector('.cooldown')?.textContent).toBe('Wait 3s before retrying.');
+      expect(readerButton('Retry Pages').disabled).toBe(true);
+      readerButton('Retry Pages').click();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(reader().querySelector('.cooldown')?.textContent).toBe('Wait 1s before retrying.');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(fetchFn).toHaveBeenCalledTimes(3);
+      expect(readerText()).toBe('Translation needs attention');
+      expect(readerButton('Retry Pages').disabled).toBe(false);
+      readerButton('Retry Pages').click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readerText()).toBe('Pages ready');
+      expect(fetchFn).toHaveBeenCalledTimes(4);
+      window.dispatchEvent(new Event('pagehide'));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retains actionable provider failures and reader retry leaves successful pages usable', async () => {
+    const { click, fetchFn, ready } = await setup();
+    fetchFn.mockResolvedValueOnce(new Response('{}', { status: 401 }));
     click('Translate');
     await ready(2);
-    await vi.waitFor(() =>
-      expect(popup.getElementById('session-status')?.textContent).toContain('Use Retry Pages')
-    );
-    expect(fetchFn).toHaveBeenCalledTimes(3);
-    click('Retry Pages');
+    await vi.waitFor(() => expect(readerText()).toBe('Translation needs attention'));
+    expect(reader().querySelector('.details')?.textContent).toContain('Check your API key');
+    readerButton('Retry Pages').click();
     await ready(3);
+    await vi.waitFor(() => expect(readerText()).toBe('Pages ready'));
     expect(fetchFn).toHaveBeenCalledTimes(4);
-    await vi.waitFor(() =>
-      expect(popup.getElementById('session-status')?.textContent).toContain('3 pages ready')
-    );
+  });
+
+  it('removes cooldown feedback and its timer when saved settings dispose the session', async () => {
+    const { click, fetchFn, content } = await setup();
+    vi.useFakeTimers();
+    try {
+      fetchFn.mockResolvedValueOnce(
+        new Response('{}', { status: 429, headers: { 'Retry-After': '3' } })
+      );
+      click('Translate');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readerText()).toBe('Rate limit reached');
+      content.handleContentScriptMessage({
+        type: EXTENSION_MESSAGE_TYPES.PROVIDER_SETTINGS_CHANGED,
+      });
+      expect(document.querySelector('[data-koma-reader-status]')).toBeNull();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(document.querySelector('[data-koma-reader-status]')).toBeNull();
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not resurrect preparation feedback when a configuration callback fails after teardown', async () => {
+    const { click, runtime, fetchFn } = await setup();
+    let respond!: (value: unknown) => void;
+    runtime.sendMessage.mockImplementationOnce((_message, done) => {
+      respond = done;
+    });
+    click('Translate');
+    await vi.waitFor(() => expect(readerText()).toBe('Preparing translation'));
+    window.dispatchEvent(new Event('pagehide'));
+    expect(document.querySelector('[data-koma-reader-status]')).toBeNull();
+    respond({ success: false, error: 'Delayed settings error' });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(document.querySelector('[data-koma-reader-status]')).toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it.each(['settings', 'navigation', 'SPA navigation', 'teardown'])(
@@ -221,12 +392,14 @@ describe('Popup to reader to worker session commands', () => {
         navigation.dispatchEvent(event);
       } else window.dispatchEvent(new Event('pagehide'));
       expect(signal.aborted).toBe(true);
+      expect(document.querySelector('[data-koma-reader-status]')).toBeNull();
       release(response());
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(content.sessionContextManager.getDialogueCount()).toBe(0);
       expect(Object.keys(local).filter((key) => key.startsWith('koma_cache:'))).toHaveLength(0);
       expect(document.querySelectorAll('[data-koma-wrapper]')).toHaveLength(0);
       expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(document.querySelector('[data-koma-reader-status]')).toBeNull();
     }
   );
 
@@ -256,9 +429,11 @@ describe('Popup to reader to worker session commands', () => {
     for (let repeat = 0; repeat < 3; repeat++) {
       click('Hide Overlays');
       expect(document.querySelectorAll('[data-koma-wrapper]')).toHaveLength(0);
+      expect(reader().querySelector('.details')?.textContent).toContain('Overlays are hidden.');
       click('Show Overlays');
       await ready(3);
       expect(document.querySelectorAll('[data-koma-wrapper]')).toHaveLength(3);
+      expect(reader().querySelector('.details')?.textContent).not.toContain('Overlays are hidden.');
     }
     expect(fetchFn).toHaveBeenCalledTimes(4);
     expect(content.sessionContextManager.getDialogueCount()).toBe(3);

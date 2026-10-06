@@ -24,6 +24,7 @@ import { TranslationOrchestrator, type ITranslationOrchestrator } from '@core/or
 import { DOMOverlayRenderer } from '@core/renderer';
 import { ExtensionTranslationProvider } from './provider';
 import { resolveTargetImage } from './target-image';
+import { ReaderStatusView } from './reader-status';
 
 if (typeof window !== 'undefined') {
   console.log('[Koma] Content script loaded on:', window.location?.href);
@@ -45,9 +46,19 @@ let currentChapterId: string | null = null;
 let currentTargetLanguage = '';
 let commandRevision = 0;
 let stopWatching: (() => void) | undefined;
+const readerStatus = new ReaderStatusView((action) => {
+  handleContentScriptMessage({
+    type:
+      action === 'pause'
+        ? EXTENSION_MESSAGE_TYPES.PAUSE_TRANSLATION
+        : EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE,
+  });
+});
 
 function notifySession(): void {
-  if (!activeOrchestrator || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
+  if (!activeOrchestrator) return;
+  readerStatus.update(activeOrchestrator.getSessionState());
+  if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
   chrome.runtime.sendMessage(
     {
       type: EXTENSION_MESSAGE_TYPES.READING_SESSION_CHANGED,
@@ -67,6 +78,7 @@ function disposeSession(): void {
   activeProvider?.cancel();
   activeOrchestrator = null;
   activeProvider = null;
+  readerStatus.remove();
 }
 
 function watchReader(): void {
@@ -223,6 +235,7 @@ export function handleContentScriptMessage(
   if (req.type === EXTENSION_MESSAGE_TYPES.PAUSE_TRANSLATION) {
     commandRevision++;
     activeOrchestrator?.setTranslationEnabled(false);
+    if (!activeOrchestrator) readerStatus.remove();
     notifySession();
     sendResponse?.({
       success: true,
@@ -322,8 +335,9 @@ export function handleContentScriptMessage(
     }
 
     const translateReq = req as TranslateActivePageRequest;
-    const revision = commandRevision;
+    let revision = commandRevision;
     const chapterId = adapter.getChapterId();
+    if (!activeOrchestrator) readerStatus.preparing();
 
     (async () => {
       try {
@@ -346,6 +360,7 @@ export function handleContentScriptMessage(
           return;
         }
         if (!config.configured) {
+          readerStatus.showError(`Configure ${config.name} before translating.`);
           sendResponse?.({
             success: false,
             error: `Configure ${config.name} in Provider Settings before translating.`,
@@ -354,6 +369,7 @@ export function handleContentScriptMessage(
         }
 
         const orchestrator = getOrCreateOrchestrator(config, contextManager, renderer);
+        revision = commandRevision;
         orchestrator.setTranslationEnabled(true);
 
         const notifyProgress = (event: TranslationProgressEvent) => {
@@ -401,6 +417,7 @@ export function handleContentScriptMessage(
         } else {
           started = await orchestrator.translateNext(eventHandler);
         }
+        if (orchestrator === activeOrchestrator) notifySession();
 
         sendResponse?.({
           success: true,
@@ -408,6 +425,11 @@ export function handleContentScriptMessage(
           session: orchestrator.getSessionState(),
         } satisfies TranslateActivePageResponse);
       } catch (err) {
+        if (revision === commandRevision && chapterId === adapter.getChapterId()) {
+          readerStatus.showError(
+            err instanceof Error ? err.message : 'Could not start translation.'
+          );
+        }
         sendResponse?.({
           success: false,
           error: err instanceof Error ? err.message : String(err),
