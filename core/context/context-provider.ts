@@ -24,6 +24,10 @@ export class ContextAwareProvider implements TranslationProvider {
     return this.innerProvider.modelName;
   }
 
+  get cacheIdentity(): string | undefined {
+    return this.innerProvider.cacheIdentity;
+  }
+
   capabilities(): ProviderCapabilities {
     return this.innerProvider.capabilities();
   }

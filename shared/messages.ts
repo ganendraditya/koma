@@ -1,4 +1,4 @@
-import type { TranslationResult } from '@core/contracts';
+import type { ProviderCapabilities, TranslationRequest, TranslationResult } from '@core/contracts';
 
 /**
  * Standard message types and payloads for Chrome extension inter-process communication.
@@ -13,6 +13,9 @@ export const EXTENSION_MESSAGE_TYPES = {
   RESET_CONTEXT: 'RESET_CONTEXT',
   RENDER_TRANSLATION_OVERLAY: 'RENDER_TRANSLATION_OVERLAY',
   CLEAR_ALL_OVERLAYS: 'CLEAR_ALL_OVERLAYS',
+  GET_PROVIDER_CONFIG: 'GET_PROVIDER_CONFIG',
+  PROVIDER_SETTINGS_CHANGED: 'PROVIDER_SETTINGS_CHANGED',
+  TRANSLATE_IMAGE: 'TRANSLATE_IMAGE',
 } as const;
 
 export type ExtensionMessageType =
@@ -96,6 +99,35 @@ export interface RenderTranslationOverlayRequest {
 
 export interface ClearAllOverlaysRequest {
   type: typeof EXTENSION_MESSAGE_TYPES.CLEAR_ALL_OVERLAYS;
+}
+
+export interface ProviderRuntimeConfig {
+  revision: number;
+  id: string;
+  name: string;
+  modelName: string;
+  cacheIdentity: string;
+  targetLanguage: string;
+  configured: boolean;
+  capabilities: ProviderCapabilities;
+}
+
+export interface SerializedProviderError {
+  code: string;
+  message: string;
+  providerId?: string;
+  timeoutMs?: number;
+  retryAfterSeconds?: number;
+  reason?: 'incomplete' | 'refusal';
+}
+
+export type ProviderTranslationResponse =
+  { success: true; result: TranslationResult } | { success: false; error: SerializedProviderError };
+
+export interface ProviderTranslationRequest {
+  type: typeof EXTENSION_MESSAGE_TYPES.TRANSLATE_IMAGE;
+  revision: number;
+  request: TranslationRequest;
 }
 
 export type ExtensionRequest =
