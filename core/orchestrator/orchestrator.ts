@@ -148,6 +148,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       targetLanguage: this.options.targetLanguage ?? 'id',
       providerId: this.provider.id,
       modelId: this.provider.modelName,
+      cacheIdentity: this.provider.cacheIdentity,
     });
 
     try {

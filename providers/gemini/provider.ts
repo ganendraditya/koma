@@ -124,7 +124,7 @@ export class GeminiTranslationProvider implements TranslationProvider {
       }
 
       throw new ProviderError(
-        `Network error during Gemini request: ${err instanceof Error ? err.message : String(err)}`,
+        'Could not reach Gemini. Check your connection and retry.',
         'KOMA_NETWORK_ERROR',
         this.id
       );
@@ -251,10 +251,10 @@ export class GeminiTranslationProvider implements TranslationProvider {
         );
       }
       throw new ProviderError(
-        `Gemini API request rejected: ${msg}`,
+        'Gemini rejected the request. Check your model ID and image support.',
         'KOMA_INVALID_REQUEST_ERROR',
         this.id,
-        { status, message: msg }
+        { status }
       );
     }
 
@@ -269,7 +269,7 @@ export class GeminiTranslationProvider implements TranslationProvider {
     }
 
     throw new ProviderError(
-      `Gemini service error: ${msg} (HTTP ${status})`,
+      `Gemini service error (HTTP ${status}). Try again later.`,
       'KOMA_PROVIDER_SERVICE_ERROR',
       this.id,
       { status }

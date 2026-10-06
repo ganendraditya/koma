@@ -175,6 +175,9 @@ export interface TranslationProvider {
    */
   readonly modelName?: string;
 
+  /** Opaque identity for endpoint and output-affecting provider configuration. */
+  readonly cacheIdentity?: string;
+
   /**
    * Returns the capabilities of this provider instance.
    */

@@ -56,7 +56,11 @@ export function pipelineFailure(stage: PipelineStage, cause?: unknown): Error {
     }
     if (cause instanceof ProviderError) {
       return new ProviderError(
-        'Translation failed at provider stage',
+        cause.code === 'KOMA_INVALID_REQUEST_ERROR' ||
+          cause.code === 'KOMA_SETTINGS_CHANGED' ||
+          cause.code === 'KOMA_UNSUPPORTED_CAPABILITY_ERROR'
+          ? cause.message
+          : 'Translation failed at provider stage',
         cause.code,
         cause.providerId
       );
@@ -64,8 +68,15 @@ export function pipelineFailure(stage: PipelineStage, cause?: unknown): Error {
   }
   if (stage === 'normalization' && cause instanceof InvalidProviderResponseError) {
     return new InvalidProviderResponseError(
-      'Translation failed at normalization stage',
-      cause.providerId
+      cause.reason === 'incomplete'
+        ? 'The model stopped before completing the translation. Try lower reasoning effort or retry.'
+        : cause.reason === 'refusal'
+          ? 'The model declined to translate this image.'
+          : 'Translation failed at normalization stage',
+      cause.providerId,
+      undefined,
+      undefined,
+      cause.reason
     );
   }
   return new Error(`Translation failed at ${stage} stage`);

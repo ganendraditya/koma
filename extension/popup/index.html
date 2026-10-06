@@ -11,8 +11,8 @@
         --card-border: #1e293b;
         --text-primary: #f8fafc;
         --text-secondary: #94a3b8;
-        --text-muted: #64748b;
-        --accent: #6366f1;
+        --text-muted: #94a3b8;
+        --accent: #5b5ee9;
         --accent-hover: #4f46e5;
         --success: #10b981;
         --warning: #f59e0b;
@@ -29,6 +29,7 @@
         margin: 0;
         padding: 16px;
         width: 340px;
+        max-width: 100vw;
         font-family:
           -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         background-color: var(--bg-color);
@@ -39,6 +40,8 @@
 
       .header {
         display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
         align-items: center;
         justify-content: space-between;
         margin-bottom: 14px;
@@ -93,6 +96,7 @@
         font-size: 12px;
         color: var(--text-secondary);
         margin-bottom: 7px;
+        gap: 8px;
       }
 
       .status-row:last-child {
@@ -105,6 +109,8 @@
         display: flex;
         align-items: center;
         gap: 5px;
+        min-width: 0;
+        overflow-wrap: anywhere;
       }
 
       .pill {
@@ -142,6 +148,7 @@
         align-items: center;
         justify-content: center;
         gap: 6px;
+        min-height: 44px;
       }
 
       .btn-primary {
@@ -156,11 +163,12 @@
       .btn-secondary {
         background-color: #1e293b;
         color: var(--text-primary);
-        border: 1px solid var(--border);
+        border: 1px solid #64748b;
       }
 
       .btn-secondary:hover {
         background-color: #27354f;
+        border-color: #94a3b8;
       }
 
       .btn:disabled {
@@ -177,12 +185,14 @@
 
       .settings-btn-row {
         display: flex;
+        flex-wrap: wrap;
         gap: 8px;
         margin-top: 10px;
       }
 
       .settings-btn-row .btn {
         flex: 1;
+        min-width: 120px;
       }
 
       .diagnostic-box {
@@ -232,6 +242,7 @@
         padding: 6px 0;
         cursor: pointer;
         text-align: left;
+        min-height: 44px;
       }
 
       .settings-toggle:hover {
@@ -266,16 +277,48 @@
         width: 100%;
         padding: 7px 10px;
         background-color: var(--input-bg);
-        border: 1px solid var(--border);
+        border: 1px solid #64748b;
         border-radius: 5px;
         color: var(--text-primary);
         font-size: 12px;
-        outline: none;
+        min-height: 44px;
+        min-width: 0;
       }
 
       .form-input:focus,
       .form-select:focus {
         border-color: var(--accent);
+      }
+
+      .form-input::placeholder {
+        color: var(--text-secondary);
+        opacity: 1;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible {
+        outline: 2px solid #a5b4fc;
+        outline-offset: 2px;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      .form-help {
+        font-size: 11px;
+        color: var(--text-secondary);
+        margin: 5px 0 10px;
+        overflow-wrap: anywhere;
+      }
+
+      .checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 44px;
+        font-size: 12px;
       }
 
       .input-with-toggle {
@@ -292,15 +335,17 @@
         font-size: 11px;
         background-color: #1e293b;
         color: var(--text-secondary);
-        border: 1px solid var(--border);
+        border: 1px solid #64748b;
         border-radius: 5px;
         cursor: pointer;
         white-space: nowrap;
+        min-height: 44px;
       }
 
       .btn-small:hover {
         color: var(--text-primary);
         background-color: #27354f;
+        border-color: #94a3b8;
       }
 
       .feedback-msg {
@@ -370,23 +415,81 @@
     </div>
 
     <div class="card">
-      <button id="btn-toggle-settings" class="settings-toggle" type="button">
+      <button
+        id="btn-toggle-settings"
+        class="settings-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="settings-panel"
+      >
         <span>Provider Settings (BYOK)</span>
         <span id="settings-chevron">▾</span>
       </button>
 
       <div id="settings-panel" class="settings-panel">
         <div class="form-group">
-          <label class="form-label" for="input-api-key">Gemini API Key</label>
+          <label class="form-label" for="select-provider">Provider</label>
+          <select id="select-provider" class="form-select">
+            <option value="gemini">Google Gemini</option>
+            <option value="openai">OpenAI</option>
+            <option value="openai-compatible">OpenAI-compatible</option>
+          </select>
+        </div>
+        <p id="provider-destination" class="form-help"></p>
+        <div class="form-group">
+          <label id="api-key-label" class="form-label" for="input-api-key">API key</label>
           <div class="input-with-toggle">
             <input
               id="input-api-key"
               class="form-input"
               type="password"
-              placeholder="AIzaSy..."
+              placeholder="Your provider API key"
               autocomplete="off"
+              spellcheck="false"
             />
             <button id="btn-toggle-key-visibility" class="btn-small" type="button">Show</button>
+          </div>
+        </div>
+
+        <label class="checkbox-label" for="remember-key">
+          <input id="remember-key" type="checkbox" /> Remember key
+        </label>
+        <p class="form-help">
+          Unchecked: keep the key for this browser session. Checked: save it in extension local
+          storage, which is not encrypted.
+        </p>
+
+        <div id="custom-endpoint-fields" hidden>
+          <div class="form-group">
+            <label class="form-label" for="input-base-url">API base URL</label>
+            <input
+              id="input-base-url"
+              class="form-input"
+              type="url"
+              placeholder="http://localhost:1234/v1"
+              autocomplete="off"
+              spellcheck="false"
+              aria-describedby="base-url-help"
+            />
+            <p id="base-url-help" class="form-help">
+              Include the API version path. Saving requests access to this host. The API route is
+              appended automatically.
+            </p>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="select-api-format">API format</label>
+            <select id="select-api-format" class="form-select">
+              <option value="chat-completions">Chat Completions</option>
+              <option value="responses">Responses</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="select-response-format">JSON output</label>
+            <select id="select-response-format" class="form-select">
+              <option value="prompt">Prompt only (widest compatibility)</option>
+              <option value="json-object">JSON object</option>
+              <option value="json-schema">Strict JSON schema</option>
+            </select>
           </div>
         </div>
 
@@ -395,19 +498,40 @@
           <select id="select-target-lang" class="form-select">
             <option value="id">Indonesian (Bahasa Indonesia)</option>
             <option value="en">English</option>
-            <option value="ja">Japanese (日本語)</option>
           </select>
         </div>
 
         <div class="form-group">
-          <label class="form-label" for="select-model">Model</label>
-          <select id="select-model" class="form-select">
-            <option value="gemini-3.5-flash-lite">
-              gemini-3.5-flash-lite (Fast &amp; Recommended)
-            </option>
-            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-            <option value="gemini-3.8-flash">gemini-3.8-flash (High Quality)</option>
+          <label class="form-label" for="input-model">Vision model ID</label>
+          <input
+            id="input-model"
+            class="form-input"
+            type="text"
+            list="model-suggestions"
+            autocomplete="off"
+            spellcheck="false"
+            aria-describedby="model-help"
+          />
+          <datalist id="model-suggestions"></datalist>
+          <p id="model-help" class="form-help">
+            Choose a model that accepts images. You can enter any model ID available at your
+            provider.
+          </p>
+        </div>
+
+        <div id="reasoning-fields" class="form-group" hidden>
+          <label class="form-label" for="select-reasoning">Reasoning effort</label>
+          <select id="select-reasoning" class="form-select" aria-describedby="reasoning-help">
+            <option value="auto">Auto</option>
+            <option value="none">Off (if supported)</option>
+            <option value="minimal">Minimal</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="xhigh">Extra high</option>
+            <option value="max">Maximum</option>
           </select>
+          <p id="reasoning-help" class="form-help"></p>
         </div>
 
         <div class="settings-btn-row">
@@ -418,7 +542,7 @@
             Reset Context
           </button>
         </div>
-        <div id="settings-feedback" class="feedback-msg"></div>
+        <div id="settings-feedback" class="feedback-msg" role="status" aria-live="polite"></div>
       </div>
     </div>
 
