@@ -81,6 +81,8 @@ Never commit `.env` files or API credentials. Koma supports Gemini, OpenAI, and 
 Open a MangaDex chapter, configure and save your provider settings, then click **Translate**.
 Koma translates the page nearest the viewport and up to two upcoming loaded pages, one request at a time. Scrolling or loading more images updates that window.
 
+An in-reader status panel keeps activity, ready/active/queued counts, errors and cooldown visible after you close the popup. You can Pause/Resume or explicitly retry there. **Hide Status** (or Escape while focused inside the panel) collapses it to a small live status button; activate that button to expand it again. See [reader-status verification](docs/READER_STATUS_VERIFICATION.md).
+
 - **Pause** cancels pending image/provider work and clears the queue. Accepted translations stay available. **Resume** continues from your current viewport.
 - **Hide Overlays** shows the original artwork. **Show Overlays** restores accepted translations without another provider request. Translation can continue while overlays are hidden; use Pause to stop requests.
 - Hidden tabs stop dispatch and cancel active work. Returning to an enabled reader recalculates its window.

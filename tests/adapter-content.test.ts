@@ -67,6 +67,8 @@ describe('Adapter content-script integration', () => {
     const respond = vi.fn();
     listener({ type: EXTENSION_MESSAGE_TYPES.CHECK_PAGE_STATUS }, {}, respond);
     expect(respond.mock.lastCall![0]).toMatchObject({ isSupportedSite: false, imageCount: 0 });
+    listener({ type: EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE }, {}, respond);
+    expect(document.querySelector('[data-koma-reader-status]')).toBeNull();
     listener({ type: EXTENSION_MESSAGE_TYPES.RUN_DIAGNOSTIC }, {}, respond);
     expect(respond.mock.lastCall![0].contentScript.detectedImages).toBe(0);
   });
@@ -84,6 +86,12 @@ describe('Adapter content-script integration', () => {
       success: false,
       error: 'Configure Google Gemini in Provider Settings before translating.',
     });
+    const status = document.querySelector('[data-koma-reader-status]')!.shadowRoot!;
+    expect(status.querySelector('[role="status"]')?.textContent).toBe(
+      'Translation could not start'
+    );
+    expect(status.querySelector('.details')?.textContent).toContain('Configure Google Gemini');
+    expect(status.querySelector('button.action')?.textContent).toBe('Retry Translation');
   });
 
   it('renders with browser-bound fetch, carries context, and reuses cached translations', async () => {
