@@ -66,6 +66,10 @@ At 320 px, visible action targets were at least 44 px high and 101 px wide. At 2
 
 Probe, screenshots, the post-resolution audit and machine-readable results are retained locally in the approved temporary `opencode/koma-pr38-qa/` directory as `verify-status.mjs`, `reader-status-*.png`, `anti-slop/audit-001-2026-10-06.md` and `evidence-status.json`.
 
+## Post-resolution audit follow-up
+
+The post-work audit found one retry-copy mismatch after integrating PR #36. The user approved that correction: reader **Retry Pages** and nearby-page guidance now match the popup and reading-window command. The reader and popup upcoming-page recovery regression, all 246 tests and the repeated production-bundle Chrome checks pass. The delivery gate below has no open findings in the conflict-resolution scope.
+
 ## Antislop delivery gate
 
 Design read: an in-reader translation status surface for manga readers, extending the existing Koma popup's dark surfaces, system typography and single translation accent. **ENERGY 1 / RHYTHM 1 / MOTION 1**.
