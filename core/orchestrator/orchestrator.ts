@@ -33,6 +33,8 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
   private handler?: OrchestratorEventHandler;
   private cooldownUntil = 0;
   private cooldownTimer?: ReturnType<typeof setTimeout>;
+  private userActionStart?: number;
+  private firstOverlayLogged = false;
 
   constructor(
     provider: TranslationProvider,
@@ -102,6 +104,8 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     this.inFlightCount = 0;
     clearTimeout(this.cooldownTimer);
     this.cooldownTimer = undefined;
+    this.userActionStart = undefined;
+    this.firstOverlayLogged = false;
     for (const state of this.stateMap.values()) {
       if (state.status === 'translating') state.status = state.result ? 'completed' : 'idle';
     }
@@ -114,6 +118,8 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     this.overlaysVisible = true;
     this.started = false;
     this.cooldownUntil = 0;
+    this.userActionStart = undefined;
+    this.firstOverlayLogged = false;
     this.notify();
   }
 
@@ -257,9 +263,17 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
   }
 
   async translateNext(handler?: OrchestratorEventHandler): Promise<boolean> {
+    if (this.userActionStart === undefined) {
+      this.userActionStart = performance.now();
+      this.firstOverlayLogged = false;
+    }
     return (await this.scheduleWindow(true, true, handler)).length > 0;
   }
   async translateVisible(handler?: OrchestratorEventHandler): Promise<boolean> {
+    if (this.userActionStart === undefined) {
+      this.userActionStart = performance.now();
+      this.firstOverlayLogged = false;
+    }
     return (await this.scheduleWindow(true, false, handler)).length > 0;
   }
   async prefetchUpcoming(handler?: OrchestratorEventHandler): Promise<string[]> {
@@ -274,6 +288,10 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       this.stateMap.get(imageId)?.status !== 'failed'
     )
       return false;
+    if (this.userActionStart === undefined) {
+      this.userActionStart = performance.now();
+      this.firstOverlayLogged = false;
+    }
     if (handler) this.handler = handler;
     this.queue.enqueue({ imageId, priority: 0, source: 'user' });
     this.pumpQueue();
@@ -312,6 +330,12 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     try {
       this.renderer.render(result);
       logPipeline('render', 'duration', performance.now() - start);
+      if (this.userActionStart !== undefined && !this.firstOverlayLogged) {
+        this.firstOverlayLogged = true;
+        const elapsed = performance.now() - this.userActionStart;
+        this.userActionStart = undefined;
+        logPipeline('total', 'first_overlay', elapsed);
+      }
     } catch {
       throw pipelineFailure('render');
     }
@@ -319,6 +343,11 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
 
   private async executeTask(task: QueueItem, signal: AbortSignal): Promise<void> {
     const { imageId } = task;
+    const queueWaitMs =
+      typeof task.queuedAt === 'number' && Number.isFinite(task.queuedAt)
+        ? Math.max(0, Date.now() - task.queuedAt)
+        : 0;
+    logPipeline('orchestration', 'queue_wait', queueWaitMs);
     this.updateState(imageId, { status: 'translating', error: undefined });
     try {
       const image = this.detect().find((image) => image.id === imageId);
