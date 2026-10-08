@@ -14,6 +14,7 @@ import {
   ProviderTimeoutError,
 } from '../core/errors';
 import { logPipeline } from '../core/diagnostics';
+import { loadImageData } from '../providers/common/image';
 
 const image = {
   id: 'page-1',
@@ -283,5 +284,37 @@ describe('development pipeline diagnostics', () => {
     ).toHaveLength(1);
     expect(debug.mock.calls.flat().join(' ')).not.toContain('total: translation');
     expect(provider.translatePage).not.toHaveBeenCalled();
+  });
+
+  it('reports image acquisition duration when loading image data', async () => {
+    vi.stubEnv('MODE', 'development');
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    await loadImageData(image, 'test');
+    expect(debug.mock.calls.flat().join(' ')).toMatch(/acquisition: duration \([\d.]+ms\)/);
+  });
+
+  it('reports orchestration queue wait and total first overlay timings', async () => {
+    vi.stubEnv('MODE', 'development');
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const adapter: SiteAdapter = {
+      name: 'test',
+      matches: () => true,
+      detectMangaImages: () => [image],
+      observeMangaImages: () => () => {},
+    };
+    const provider: TranslationProvider = {
+      id: 'test',
+      name: 'test',
+      capabilities: () => ({ vision: true, ocr: true, translation: true, boundingBoxes: true }),
+      translatePage: vi.fn().mockResolvedValue(result),
+    };
+    const renderer: IRenderer = { render: vi.fn() };
+    const orchestrator = new TranslationOrchestrator(provider, adapter, renderer);
+
+    await orchestrator.translateNext();
+
+    const logged = debug.mock.calls.flat().join(' ');
+    expect(logged).toMatch(/orchestration: queue_wait \([\d.]+ms\)/);
+    expect(logged).toMatch(/total: first_overlay \([\d.]+ms\)/);
   });
 });

@@ -6,12 +6,15 @@ import {
   ProviderTimeoutError,
 } from './errors';
 
-export type PipelineStage = 'detection' | 'provider' | 'normalization' | 'render' | 'orchestration';
-type PipelineEvent =
+export type PipelineStage =
+  'detection' | 'acquisition' | 'provider' | 'normalization' | 'render' | 'orchestration';
+export type PipelineEvent =
   | 'scan'
   | 'request'
   | 'duration'
   | 'translation'
+  | 'queue_wait'
+  | 'first_overlay'
   | 'hit'
   | 'miss'
   | 'bypass'
