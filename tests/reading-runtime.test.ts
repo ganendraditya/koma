@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // @vitest-environment-options {"url":"https://mangadex.org/"}
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash, randomUUID } from 'node:crypto';
 import popupHtml from '../extension/popup/index.html?raw';
 import { defaultProviderConfig } from '../providers/config';
 import { EXTENSION_MESSAGE_TYPES } from '../shared/messages';
@@ -16,6 +17,13 @@ afterEach(() => {
 });
 
 async function setup() {
+  vi.stubGlobal('crypto', {
+    randomUUID,
+    subtle: {
+      digest: async (_algorithm: string, bytes: Uint8Array) =>
+        Uint8Array.from(createHash('sha256').update(bytes).digest()).buffer,
+    },
+  });
   const chapter = 'f4d00fe4-ed62-446b-a144-5f3d42ca923c';
   const navigation = new EventTarget();
   vi.stubGlobal('navigation', navigation);
@@ -59,6 +67,7 @@ async function setup() {
   const listeners: Listener[] = [];
   const runtime = {
     id: 'test-extension',
+    getURL: (path: string) => `chrome-extension://test-extension/${path}`,
     onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
     sendMessage: vi.fn(),
     connect: vi.fn(),
@@ -69,13 +78,16 @@ async function setup() {
     permissions: { request: vi.fn().mockResolvedValue(true) },
     tabs: {
       query: vi.fn().mockResolvedValue([{ id: 3, url: window.location.href }]),
-      sendMessage: (_id: number, message: unknown, done: (value: unknown) => void) =>
-        listeners[0](message, {}, done),
+      sendMessage: (_id: number, message: unknown, done?: (value: unknown) => void) => {
+        if (done) return listeners[0](message, {}, done);
+        return new Promise((resolve) => listeners[0](message, {}, resolve));
+      },
     },
   });
   const { getRuntimeProviderConfig, handleTranslationPort } =
     await import('../extension/background/translation');
   const { handleContextStorageMessage } = await import('../extension/background/context');
+  const { handleCacheMessage } = await import('../extension/background/cache');
   const { saveProviderSettings } = await import('../extension/settings/storage');
   await saveProviderSettings(
     {
@@ -86,7 +98,18 @@ async function setup() {
     'en'
   );
   runtime.sendMessage.mockImplementation((message, done) => {
-    if (message.type === EXTENSION_MESSAGE_TYPES.GET_PROVIDER_CONFIG) {
+    if (message.type === EXTENSION_MESSAGE_TYPES.CACHE_COMMAND) {
+      handleCacheMessage(
+        message,
+        {
+          id: runtime.id,
+          url: window.location.href,
+          frameId: 0,
+          tab: { id: 3 } as chrome.tabs.Tab,
+        },
+        done
+      );
+    } else if (message.type === EXTENSION_MESSAGE_TYPES.GET_PROVIDER_CONFIG) {
       void getRuntimeProviderConfig().then((config) => done({ success: true, config }));
     } else if (message.type === EXTENSION_MESSAGE_TYPES.CONTEXT_STORAGE_COMMAND) {
       handleContextStorageMessage(
@@ -289,7 +312,7 @@ describe('Popup to reader to worker session commands', () => {
     await vi.waitFor(() => expect(readerText()).toBe('Pages ready'));
     expect(fetchFn).toHaveBeenCalledTimes(1);
     content.handleContentScriptMessage({ type: EXTENSION_MESSAGE_TYPES.RESET_CONTEXT });
-    expect(document.querySelector('[data-koma-reader-status]')).toBeNull();
+    expect(readerText()).toBe('Translation paused');
   });
 
   it('shows a real cooldown, blocks early retry and recovers only on explicit reader retry', async () => {
@@ -512,5 +535,133 @@ describe('Popup to reader to worker session commands', () => {
     expect(Object.keys(local).some((key) => key.startsWith('koma_context:v1:'))).toBe(false);
     expect(local.koma_provider_settings).toEqual(savedSettings);
     expect(content.sessionContextManager.getDialogueCount()).toBe(0);
+    await ready(3);
+  });
+
+  it.each(['popup', 'reader'])(
+    'Clear Cache from the %s preserves displayed results and context and resumes only explicitly',
+    async (surface) => {
+      const { click, ready, local, content, popup, fetchFn, move } = await setup();
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      click('Translate');
+      await ready(3);
+      await vi.waitFor(() =>
+        expect(Object.keys(local).filter((key) => key.startsWith('koma_cache:v2:'))).toHaveLength(3)
+      );
+      const context = structuredClone(
+        Object.fromEntries(Object.entries(local).filter(([k]) => k.startsWith('koma_context:')))
+      );
+      const settings = structuredClone(local.koma_provider_settings);
+      if (surface === 'popup') click('Clear Cache');
+      else readerButton('Clear Cache').click();
+      await vi.waitFor(() =>
+        expect(Object.keys(local).filter((key) => key.startsWith('koma_cache:'))).toHaveLength(0)
+      );
+      await vi.waitFor(() =>
+        expect(
+          surface === 'popup'
+            ? popup.getElementById('cache-feedback')?.textContent
+            : reader().querySelector('.cache-feedback')?.textContent
+        ).toContain('Translation cache cleared')
+      );
+      expect(content.sessionContextManager.getDialogueCount()).toBe(3);
+      expect(local.koma_provider_settings).toEqual(settings);
+      expect(
+        Object.fromEntries(Object.entries(local).filter(([k]) => k.startsWith('koma_context:')))
+      ).toEqual(context);
+      await ready(3);
+      move(4);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(fetchFn).toHaveBeenCalledTimes(3);
+      click('Resume');
+      await ready(6);
+      expect(fetchFn).toHaveBeenCalledTimes(6);
+    }
+  );
+
+  it('Clear Cache cancels active transport and rejects late cache/context publication', async () => {
+    const { click, ready, fetchFn, response, local, content } = await setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    let release!: (value: Response) => void;
+    let signal!: AbortSignal;
+    fetchFn.mockImplementationOnce((_url, init) => {
+      signal = init!.signal!;
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    click('Translate');
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1));
+    click('Clear Cache');
+    await vi.waitFor(() => expect(signal.aborted).toBe(true));
+    release(response());
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(Object.keys(local).filter((key) => key.startsWith('koma_cache:'))).toHaveLength(0);
+    expect(content.sessionContextManager.getDialogueCount()).toBe(0);
+    expect(document.querySelectorAll('[data-koma-bubble-text]')).toHaveLength(0);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    click('Resume');
+    await ready(3);
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+  });
+
+  it('requires confirmation for Clear Cache and explicit provider-cost retranslation', async () => {
+    const { click, ready, local, fetchFn, popup } = await setup();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    click('Translate');
+    await ready(3);
+    click('Clear Cache');
+    expect(popup.getElementById('cache-feedback')?.textContent).toBe('');
+    click('Retranslate Visible Page');
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    confirm.mockReturnValue(true);
+    click('Retranslate Visible Page');
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(4));
+    await vi.waitFor(() =>
+      expect(popup.getElementById('session-status')?.textContent).toContain('3 pages ready')
+    );
+    const records = Object.values(local).filter(
+      (v: unknown) => v && typeof v === 'object' && 'invalidated' in v
+    );
+    expect(records).toHaveLength(2);
+  });
+
+  it('does not restart translation while Reset Context is still invalidating replay', async () => {
+    const { click, ready, runtime, content, fetchFn } = await setup();
+    click('Translate');
+    await ready(3);
+    let complete!: () => void;
+    const send = runtime.sendMessage.getMockImplementation()!;
+    runtime.sendMessage.mockImplementation((message, done) => {
+      if (
+        message.type === EXTENSION_MESSAGE_TYPES.CACHE_COMMAND &&
+        message.operation === 'invalidate'
+      ) {
+        complete = () => send(message, done);
+      } else send(message, done);
+    });
+    const reset = vi.fn();
+    content.handleContentScriptMessage(
+      { type: EXTENSION_MESSAGE_TYPES.RESET_CONTEXT },
+      undefined,
+      reset
+    );
+    const translate = vi.fn();
+    content.handleContentScriptMessage(
+      { type: EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE },
+      undefined,
+      translate
+    );
+    expect(translate).toHaveBeenCalledWith({
+      success: false,
+      error: 'Wait for Reset Context to finish before resuming.',
+    });
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    complete();
+    await vi.waitFor(() =>
+      expect(reset).toHaveBeenCalledWith(expect.objectContaining({ success: true }))
+    );
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    await ready(3);
   });
 });

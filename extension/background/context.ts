@@ -87,6 +87,8 @@ function validWriteOptions(value: unknown): value is ContextWriteOptions {
         (change.expected === null || typeof change.expected?.imageId === 'string') &&
         (change.next === null || typeof change.next?.imageId === 'string')
     ) &&
+    (options.replayRevision === undefined ||
+      (typeof options.replayRevision === 'string' && options.replayRevision.length <= 256)) &&
     Number.isSafeInteger(options.expectedGlossaryRevision) &&
     options.expectedGlossaryRevision! >= 0 &&
     Number.isSafeInteger(options.expectedChapterGeneration) &&

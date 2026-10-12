@@ -48,6 +48,8 @@ Koma enforces strict separation of concerns:
 
 See [`CONTEXT_PERSISTENCE.md`](CONTEXT_PERSISTENCE.md) for the current context scope, ordering, storage, and retention policy.
 
+See [`TRANSLATION_CACHE.md`](TRANSLATION_CACHE.md) for accepted-result replay, image/configuration identity, persistent budgets, invalidation, and Clear Cache ownership.
+
 ### 1. Tell, Don't Ask & Law of Demeter
 
 Components should command collaborators to perform domain actions rather than querying internal state and making procedural decisions externally.

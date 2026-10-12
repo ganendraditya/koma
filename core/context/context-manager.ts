@@ -39,6 +39,7 @@ export class ContextManager implements IContextManager {
   private glossary: Map<string, GlossaryEntry> = new Map();
   private nextOrder = 0;
   private nextGeneratedId = 0;
+  private replayRevision = 'initial';
 
   public seriesTitle?: string;
   public sourceLanguage?: string;
@@ -163,12 +164,18 @@ export class ContextManager implements IContextManager {
   }
 
   addGlossaryEntry(entry: GlossaryEntry): boolean {
-    return this.setGlossaryEntry(entry);
+    const before = JSON.stringify(this.getGlossary());
+    const added = this.setGlossaryEntry(entry);
+    if (before !== JSON.stringify(this.getGlossary()))
+      this.replayRevision = globalThis.crypto.randomUUID();
+    return added;
   }
 
   removeGlossaryEntry(original: string): boolean {
     if (!original || typeof original !== 'string') return false;
-    return this.glossary.delete(original.trim());
+    const removed = this.glossary.delete(original.trim());
+    if (removed) this.replayRevision = globalThis.crypto.randomUUID();
+    return removed;
   }
 
   getGlossary(): GlossaryEntry[] {
@@ -176,7 +183,16 @@ export class ContextManager implements IContextManager {
   }
 
   clearGlossary(): void {
+    if (this.glossary.size) this.replayRevision = globalThis.crypto.randomUUID();
     this.glossary.clear();
+  }
+
+  getReplayRevision(): string {
+    return this.replayRevision;
+  }
+
+  protected setReplayRevision(revision: string): void {
+    this.replayRevision = revision;
   }
 
   getDialogueHistory(beforePageIndex?: number): DialogueEntry[] {
@@ -248,6 +264,7 @@ export class ContextManager implements IContextManager {
 
     return {
       schemaVersion: 1,
+      replayRevision: this.replayRevision,
       dialogueContributions,
       glossary: this.getGlossary(),
     };
@@ -255,9 +272,11 @@ export class ContextManager implements IContextManager {
 
   restoreSnapshot(snapshot: unknown): void {
     this.resetMemory();
+    this.replayRevision = 'initial';
     if (!snapshot || typeof snapshot !== 'object') return;
     const stored = snapshot as Partial<ContextSnapshot>;
     if (stored.schemaVersion !== 1) return;
+    if (typeof stored.replayRevision === 'string') this.replayRevision = stored.replayRevision;
 
     if (Array.isArray(stored.glossary)) {
       for (const entry of stored.glossary) this.setGlossaryEntry(entry, true);
@@ -309,6 +328,7 @@ export class ContextManager implements IContextManager {
   }
 
   protected resetMemory(): void {
+    this.replayRevision = globalThis.crypto.randomUUID();
     this.dialogueContributions.clear();
     this.glossary.clear();
     this.nextOrder = 0;
