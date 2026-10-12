@@ -1,5 +1,7 @@
 import type { ProviderCapabilities, TranslationRequest, TranslationResult } from '@core/contracts';
 import type { ReadingSessionState } from '@core/orchestrator/types';
+import type { ReadingIdentity } from '@core/contracts';
+import type { ReplayIdentity, ReplayRecord } from '@core/cache/replay';
 
 /**
  * Standard message types and payloads for Chrome extension inter-process communication.
@@ -18,6 +20,8 @@ export const EXTENSION_MESSAGE_TYPES = {
   RENDER_TRANSLATION_OVERLAY: 'RENDER_TRANSLATION_OVERLAY',
   CLEAR_ALL_OVERLAYS: 'CLEAR_ALL_OVERLAYS',
   GET_PROVIDER_CONFIG: 'GET_PROVIDER_CONFIG',
+  CACHE_COMMAND: 'CACHE_COMMAND',
+  CACHE_CLEARED: 'CACHE_CLEARED',
   PROVIDER_SETTINGS_CHANGED: 'PROVIDER_SETTINGS_CHANGED',
   TRANSLATE_IMAGE: 'TRANSLATE_IMAGE',
 } as const;
@@ -83,6 +87,7 @@ export interface DiagnosticReport {
 export interface TranslateActivePageRequest {
   type: typeof EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE;
   retryImageId?: string;
+  retranslateImageId?: string;
 }
 
 export interface TranslateActivePageResponse {
@@ -158,6 +163,15 @@ export interface ProviderTranslationRequest {
   request: TranslationRequest;
 }
 
+export type CacheCommandRequest = {
+  type: typeof EXTENSION_MESSAGE_TYPES.CACHE_COMMAND;
+} & (
+  | { operation: 'lookup'; identity: ReplayIdentity; revision: number }
+  | { operation: 'accept'; record: ReplayRecord; generation: string; revision: number }
+  | { operation: 'invalidate'; reading: ReadingIdentity; targetLanguage: string; fromPage?: number }
+  | { operation: 'size' | 'clear' }
+);
+
 export type ExtensionRequest =
   | PingRequest
   | CheckPageStatusRequest
@@ -166,5 +180,6 @@ export type ExtensionRequest =
   | TranslateActivePageRequest
   | PauseTranslationRequest
   | SetOverlayVisibilityRequest
+  | CacheCommandRequest
   | RenderTranslationOverlayRequest
   | ClearAllOverlaysRequest;

@@ -20,6 +20,7 @@ export interface ContextStoreScope {
 
 export interface StoredContextSnapshot {
   schemaVersion: 1;
+  replayRevision?: string;
   lastAccessedAt: number;
   dialogueContributions: DialogueContributionSnapshot[];
   glossary: GlossaryEntry[];
@@ -76,6 +77,7 @@ function isStoredContextSnapshot(value: unknown): value is StoredContextSnapshot
   const snapshot = value as Partial<StoredContextSnapshot>;
   return (
     snapshot.schemaVersion === 1 &&
+    (snapshot.replayRevision === undefined || typeof snapshot.replayRevision === 'string') &&
     typeof snapshot.lastAccessedAt === 'number' &&
     Number.isFinite(snapshot.lastAccessedAt) &&
     Array.isArray(snapshot.dialogueContributions) &&
@@ -137,8 +139,10 @@ export class ContextStore {
   async save(
     scopeId: string,
     sections:
-      | Pick<StoredContextSnapshot, 'dialogueContributions' | 'glossary'>
-      | Partial<Pick<StoredContextSnapshot, 'dialogueContributions' | 'glossary'>>
+      | Pick<StoredContextSnapshot, 'dialogueContributions' | 'glossary' | 'replayRevision'>
+      | Partial<
+          Pick<StoredContextSnapshot, 'dialogueContributions' | 'glossary' | 'replayRevision'>
+        >
   ): Promise<void> {
     if (!this.storageArea) return;
     const storageKey = this.getStorageKey(scopeId);
@@ -148,6 +152,7 @@ export class ContextStore {
 
     const snapshot: StoredContextSnapshot = {
       schemaVersion: 1,
+      replayRevision: sections.replayRevision ?? existing?.replayRevision,
       lastAccessedAt: await this.nextAccessTime(),
       dialogueContributions: sections.dialogueContributions
         ? sections.dialogueContributions.map((contribution) => ({
@@ -190,6 +195,7 @@ export class ContextStore {
   private cloneSnapshot(snapshot: StoredContextSnapshot): StoredContextSnapshot {
     return {
       schemaVersion: 1,
+      replayRevision: snapshot.replayRevision,
       lastAccessedAt: snapshot.lastAccessedAt,
       dialogueContributions: snapshot.dialogueContributions.map((contribution) => ({
         ...contribution,

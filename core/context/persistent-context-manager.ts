@@ -69,6 +69,7 @@ export class PersistentContextManager extends ContextManager {
         const initial = super.exportSnapshot();
         super.restoreSnapshot({
           schemaVersion: 1,
+          replayRevision: glossaryRecord?.replayRevision ?? initial.replayRevision,
           dialogueContributions:
             chapterRecord?.dialogueContributions ?? initial.dialogueContributions,
           glossary: glossaryRecord?.glossary ?? initial.glossary,
@@ -283,12 +284,16 @@ export class PersistentContextManager extends ContextManager {
       await this.store.save(scopeIds.chapter, {
         dialogueContributions: snapshot.dialogueContributions,
         glossary: snapshot.glossary,
+        replayRevision: snapshot.replayRevision,
       });
     } else {
       await this.store.save(scopeIds.chapter, {
         dialogueContributions: snapshot.dialogueContributions,
       });
-      await this.store.save(scopeIds.glossary, { glossary: snapshot.glossary });
+      await this.store.save(scopeIds.glossary, {
+        glossary: snapshot.glossary,
+        replayRevision: snapshot.replayRevision,
+      });
     }
   }
 }

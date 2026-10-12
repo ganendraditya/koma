@@ -25,12 +25,17 @@ import {
   type ContextScope,
   type IContextManager,
 } from '@core/context';
-import { CachedTranslationProvider, KomaTranslationCache } from '@core/cache';
+import {
+  CachedTranslationProvider,
+  KomaTranslationCache,
+  ReadingTranslationProvider,
+} from '@core/cache';
 import { TranslationOrchestrator, type ITranslationOrchestrator } from '@core/orchestrator';
 import { DOMOverlayRenderer } from '@core/renderer';
 import { ExtensionTranslationProvider } from './provider';
 import { resolveTargetImage } from './target-image';
 import { ReaderStatusView } from './reader-status';
+import { cacheCommand, ExtensionReplayCache } from './cache';
 
 if (typeof window !== 'undefined') {
   console.log('[Koma] Content script loaded on:', window.location?.href);
@@ -39,7 +44,9 @@ if (typeof window !== 'undefined') {
 // Session context owner for active tab / content script session
 export const sessionContextManager: IContextManager = new PersistentContextManager();
 export const overlayRenderer: DOMOverlayRenderer = new DOMOverlayRenderer();
-export const translationCache = new KomaTranslationCache();
+export const translationCache = {
+  size: async () => (await cacheCommand<{ count: number }>('size')).count,
+};
 const adapter = new MangaDexAdapter();
 
 let activeOrchestrator: ITranslationOrchestrator | null = null;
@@ -47,12 +54,18 @@ let currentConfigSignature = '';
 let activeProvider: ExtensionTranslationProvider | null = null;
 let currentContextManager: IContextManager | null = null;
 let currentRenderer: DOMOverlayRenderer | null = null;
-let currentCache: KomaTranslationCache | null = null;
+let currentCache: KomaTranslationCache | undefined;
 let currentChapterId: string | null = null;
 let currentTargetLanguage = '';
 let commandRevision = 0;
 let stopWatching: (() => void) | undefined;
+let cacheClearing = false;
+let contextResetCount = 0;
 const readerStatus = new ReaderStatusView((action) => {
+  if (action === 'clear-cache') {
+    void clearTranslationCache();
+    return;
+  }
   handleContentScriptMessage({
     type:
       action === 'pause'
@@ -60,6 +73,26 @@ const readerStatus = new ReaderStatusView((action) => {
         : EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE,
   });
 });
+
+async function clearTranslationCache(): Promise<void> {
+  if (
+    !window.confirm(
+      'Clear all Koma translation cache? Glossary, reading context, provider settings, and visible overlays will be kept. Active work will pause.'
+    )
+  )
+    return;
+  readerStatus.cacheFeedback('Clearing translation cache...', true);
+  try {
+    await cacheCommand('clear');
+    readerStatus.cacheFeedback(
+      'Translation cache cleared. Visible translations are kept. Resume or retranslate explicitly to continue.'
+    );
+  } catch {
+    readerStatus.cacheFeedback(
+      'Could not clear translation cache. Work is paused; try Clear Cache again.'
+    );
+  }
+}
 
 function notifySession(): void {
   if (!activeOrchestrator) return;
@@ -161,7 +194,7 @@ export function getOrCreateOrchestrator(
   config: ProviderRuntimeConfig,
   contextManager: IContextManager = sessionContextManager,
   renderer: DOMOverlayRenderer = overlayRenderer,
-  cache = translationCache
+  cache?: KomaTranslationCache
 ): ITranslationOrchestrator {
   const configSignature = JSON.stringify([
     config.revision,
@@ -198,8 +231,18 @@ export function getOrCreateOrchestrator(
     const baseProvider = new ExtensionTranslationProvider(config);
     activeProvider = baseProvider;
 
-    const cachedProvider = new CachedTranslationProvider(baseProvider, cache);
-    const contextAwareProvider = new ContextAwareProvider(cachedProvider, contextManager);
+    const contextAwareProvider = cache
+      ? new ContextAwareProvider(new CachedTranslationProvider(baseProvider, cache), contextManager)
+      : new ReadingTranslationProvider(baseProvider, {
+          context: contextManager,
+          cache: new ExtensionReplayCache(config.revision),
+          getScope: () => {
+            const reading = adapter.getReadingIdentity();
+            return reading ? { reading, targetLanguage: config.targetLanguage } : undefined;
+          },
+          prepare: (request, signal) => baseProvider.prepareImage(request, signal),
+          warn: (message) => readerStatus.cacheFeedback(message),
+        });
 
     activeOrchestrator = new TranslationOrchestrator(
       contextAwareProvider,
@@ -237,6 +280,21 @@ export function handleContentScriptMessage(
   }
 
   const req = message as { type?: string };
+
+  if (req.type === EXTENSION_MESSAGE_TYPES.CACHE_CLEARED) {
+    commandRevision++;
+    cacheClearing = (message as { phase?: string }).phase !== 'done';
+    activeOrchestrator?.setTranslationEnabled(false);
+    notifySession();
+    readerStatus.cacheFeedback(
+      cacheClearing
+        ? 'Clearing translation cache. Work is paused.'
+        : 'Translation cache operation finished. Work remains paused.',
+      cacheClearing
+    );
+    sendResponse?.({ success: true });
+    return false;
+  }
 
   if (req.type === EXTENSION_MESSAGE_TYPES.PROVIDER_SETTINGS_CHANGED) {
     disposeSession();
@@ -341,7 +399,9 @@ export function handleContentScriptMessage(
   }
 
   if (req.type === EXTENSION_MESSAGE_TYPES.RESET_CONTEXT) {
-    disposeSession();
+    commandRevision++;
+    activeOrchestrator?.setTranslationEnabled(false);
+    notifySession();
     const resetRequest = req as ResetContextRequest;
     const identity = adapter.getReadingIdentity();
     const targetLanguage =
@@ -358,6 +418,7 @@ export function handleContentScriptMessage(
 
     const reset = async () => {
       if (!identity) throw new Error('Reading identity is unavailable.');
+      await new ExtensionReplayCache(0).invalidate(identity, targetLanguage);
       const scope: ContextScope = { reading: identity, targetLanguage };
       if (contextManager.resetScope) {
         await contextManager.resetScope(scope);
@@ -368,17 +429,33 @@ export function handleContentScriptMessage(
       await contextManager.flush?.();
       sendResponse?.({ success: true, timestamp: Date.now() } satisfies ResetContextResponse);
     };
-    void reset().catch(() => {
-      sendResponse?.({
-        success: false,
-        timestamp: Date.now(),
-        error: 'Could not clear the saved reading context. Try again.',
-      } satisfies ResetContextResponse);
-    });
+    contextResetCount++;
+    void reset()
+      .catch(() => {
+        sendResponse?.({
+          success: false,
+          timestamp: Date.now(),
+          error: 'Could not clear the saved reading context. Try again.',
+        } satisfies ResetContextResponse);
+      })
+      .finally(() => {
+        contextResetCount--;
+      });
     return true;
   }
 
   if (req.type === EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE) {
+    if (cacheClearing) {
+      sendResponse?.({ success: false, error: 'Wait for Clear Cache to finish before resuming.' });
+      return false;
+    }
+    if (contextResetCount) {
+      sendResponse?.({
+        success: false,
+        error: 'Wait for Reset Context to finish before resuming.',
+      });
+      return false;
+    }
     const pageUrl = typeof window !== 'undefined' ? window.location?.href || '' : '';
     if (!adapter.matches(pageUrl)) {
       sendResponse?.({
@@ -466,7 +543,15 @@ export function handleContentScriptMessage(
         };
 
         let started = false;
-        if (translateReq.retryImageId) {
+        if (translateReq.retranslateImageId) {
+          const imageId =
+            translateReq.retranslateImageId === 'visible'
+              ? orchestrator.getNearestImageToViewport()?.id
+              : translateReq.retranslateImageId;
+          started = imageId
+            ? ((await orchestrator.retranslate?.(imageId, eventHandler)) ?? false)
+            : false;
+        } else if (translateReq.retryImageId) {
           started = await orchestrator.retry(translateReq.retryImageId, eventHandler);
         } else {
           started = await orchestrator.translateNext(eventHandler);

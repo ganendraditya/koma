@@ -103,6 +103,7 @@ export class MangaDexAdapter implements SiteAdapter {
       image.setAttribute('data-koma-image-id', id);
       images.set(pageIndex, {
         id,
+        sourceIdentity: JSON.stringify(['mangadex', chapterId, fileName.toLowerCase()]),
         url: url.href,
         pageIndex,
         width,
