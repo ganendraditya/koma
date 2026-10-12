@@ -53,11 +53,13 @@ export interface RunDiagnosticRequest {
 
 export interface ResetContextRequest {
   type: typeof EXTENSION_MESSAGE_TYPES.RESET_CONTEXT;
+  targetLanguage?: string;
 }
 
 export interface ResetContextResponse {
   success: boolean;
   timestamp: number;
+  error?: string;
 }
 
 export interface DiagnosticReport {

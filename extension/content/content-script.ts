@@ -9,6 +9,7 @@ import {
   type DiagnosticReport,
   type PingResponse,
   type CheckPageStatusResponse,
+  type ResetContextRequest,
   type ResetContextResponse,
   type RenderTranslationOverlayRequest,
   type TranslateActivePageRequest,
@@ -18,7 +19,12 @@ import {
   type ReadingSessionResponse,
   type SetOverlayVisibilityRequest,
 } from '@shared';
-import { ContextManager, ContextAwareProvider, type IContextManager } from '@core/context';
+import {
+  ContextAwareProvider,
+  PersistentContextManager,
+  type ContextScope,
+  type IContextManager,
+} from '@core/context';
 import { CachedTranslationProvider, KomaTranslationCache } from '@core/cache';
 import { TranslationOrchestrator, type ITranslationOrchestrator } from '@core/orchestrator';
 import { DOMOverlayRenderer } from '@core/renderer';
@@ -31,7 +37,7 @@ if (typeof window !== 'undefined') {
 }
 
 // Session context owner for active tab / content script session
-export const sessionContextManager: IContextManager = new ContextManager();
+export const sessionContextManager: IContextManager = new PersistentContextManager();
 export const overlayRenderer: DOMOverlayRenderer = new DOMOverlayRenderer();
 export const translationCache = new KomaTranslationCache();
 const adapter = new MangaDexAdapter();
@@ -81,6 +87,20 @@ function disposeSession(): void {
   readerStatus.remove();
 }
 
+function activateContextScope(manager: IContextManager | null, targetLanguage: string): void {
+  if (!manager) return;
+  const reading = adapter.getReadingIdentity();
+  if (manager.setScope) {
+    void manager.setScope(
+      reading && targetLanguage.trim()
+        ? ({ reading, targetLanguage } satisfies ContextScope)
+        : undefined
+    );
+  } else {
+    void manager.reset();
+  }
+}
+
 function watchReader(): void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const refresh = () => {
@@ -88,7 +108,7 @@ function watchReader(): void {
     if (!activeOrchestrator) return;
     if (adapter.getChapterId() !== currentChapterId) {
       disposeSession();
-      currentContextManager?.reset();
+      activateContextScope(currentContextManager, '');
       currentRenderer?.removeAllOverlays();
       return;
     }
@@ -113,7 +133,8 @@ function watchReader(): void {
     const destination = (event as Event & { destination?: { url: string } }).destination;
     if (destination && adapter.getChapterId(destination.url) !== currentChapterId) {
       disposeSession();
-      currentContextManager?.reset();
+      if (currentContextManager?.setScope) void currentContextManager.setScope();
+      else void currentContextManager?.reset();
       currentRenderer?.removeAllOverlays();
     }
   };
@@ -157,11 +178,14 @@ export function getOrCreateOrchestrator(
     currentCache !== cache ||
     currentChapterId !== adapter.getChapterId()
   ) {
-    if (
+    if (contextManager.setScope) {
+      activateContextScope(contextManager, config.targetLanguage);
+    } else if (
       (currentChapterId && currentChapterId !== adapter.getChapterId()) ||
       (currentTargetLanguage && currentTargetLanguage !== config.targetLanguage)
-    )
-      contextManager.reset();
+    ) {
+      void contextManager.reset();
+    }
     currentConfigSignature = configSignature;
     currentContextManager = contextManager;
     currentRenderer = renderer;
@@ -318,10 +342,40 @@ export function handleContentScriptMessage(
 
   if (req.type === EXTENSION_MESSAGE_TYPES.RESET_CONTEXT) {
     disposeSession();
-    contextManager.reset();
-    const response: ResetContextResponse = { success: true, timestamp: Date.now() };
-    sendResponse?.(response);
-    return false;
+    const resetRequest = req as ResetContextRequest;
+    const identity = adapter.getReadingIdentity();
+    const targetLanguage =
+      typeof resetRequest.targetLanguage === 'string' && resetRequest.targetLanguage.trim()
+        ? resetRequest.targetLanguage.trim()
+        : currentTargetLanguage || 'id';
+
+    if (!contextManager.setScope && !contextManager.resetScope) {
+      void contextManager.reset();
+      const response: ResetContextResponse = { success: true, timestamp: Date.now() };
+      sendResponse?.(response);
+      return false;
+    }
+
+    const reset = async () => {
+      if (!identity) throw new Error('Reading identity is unavailable.');
+      const scope: ContextScope = { reading: identity, targetLanguage };
+      if (contextManager.resetScope) {
+        await contextManager.resetScope(scope);
+      } else {
+        await contextManager.setScope?.(scope);
+        await contextManager.reset();
+      }
+      await contextManager.flush?.();
+      sendResponse?.({ success: true, timestamp: Date.now() } satisfies ResetContextResponse);
+    };
+    void reset().catch(() => {
+      sendResponse?.({
+        success: false,
+        timestamp: Date.now(),
+        error: 'Could not clear the saved reading context. Try again.',
+      } satisfies ResetContextResponse);
+    });
+    return true;
   }
 
   if (req.type === EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE) {

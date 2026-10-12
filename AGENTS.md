@@ -81,6 +81,16 @@ When conducting AI Code Reviews (via `ocr review`, model evaluations, or diff in
   Always report code review findings in distinct sections:
   1. `### 1. Temuan False Positive / Ditolak (Hallucinated / Non-Issues) ❌` (with proof of why it's rejected).
   2. `### 2. Temuan Nyata & Terbukti Empiris (Confirmed Real Issues) ✅` (with user scenario, reproduction proof, measurable impact, and surgical recommendation).
+  3. `### 3. Needs Validation / Batas Verifikasi ⚠️` (with the exact missing evidence or safe reproduction required; do not assign severity until confirmed).
+
+- **Severity and Verification Status Are Separate:** For each confirmed issue, assign severity based on demonstrated impact, not confidence:
+  - `Critical`: catastrophic impact, such as arbitrary code execution, extension takeover, or broad loss/disclosure of user data.
+  - `High`: release-blocking impact, such as a major security-control bypass, extensive context/data corruption, or widespread failure of the reader's core translation flow.
+  - `Medium`: material but bounded impact, such as incorrect context/results or significant degradation under a specific condition.
+  - `Low`: limited impact, a narrow edge case, or a minor and recoverable defect.
+    Track verification separately as `Confirmed`, `Needs Validation`, or `Rejected`; uncertainty is never a severity. `Needs Validation` findings have no severity until confirmed. Include path/line, concrete scenario, affected reader data or behavior, evidence, and the smallest effective recommendation. Summarize confirmed counts by severity; keep scope limits and unverified hypotheses under `Needs Validation`, outside confirmed counts.
+- **Independent Reviewers:** For targeted diff reviews, use two independent model families when the configured review tooling makes both available. Agreement is useful evidence, not proof; empirical reproduction remains decisive. If a second reviewer is unavailable, say the review was single-model and do not claim cross-model consensus. Critical/high and security findings require empirical evidence before they are presented as confirmed; use independent adversarial review as an additional check when available. If reproduction is blocked, mark the finding `Needs Validation`.
+- **Review-Only Means No Fixes:** When the user asks only for review, report and verify findings without editing them. Present findings before applying any proposed fix; do not commit, push, merge, or post a public review without explicit authorization.
 
 ### 2. Don't Assume — Ask First (Communication & Clarification)
 
@@ -95,3 +105,15 @@ When conducting AI Code Reviews (via `ocr review`, model evaluations, or diff in
   - When invoking `ocr review`, test suites with browser packaging, or heavy builds, **explicitly pass `timeout: 600000` (10 minutes)** or run with `background: true`. Never let default 120s cutoff waste tokens or interrupt reasoning mid-stream.
   - For `ocr review` with reasoning/deep models, pass `--effort low` (1 round) or focus `--exclude` on doc/lockfile noise to avoid unbounded round-trips while keeping token usage bounded.
   - Always direct heavy CLI outputs to a persistent file (`--output <path>`) so results are safely preserved even if network or session drops.
+
+### 4. Security Review Scope (Browser Extension)
+
+- Load the `security-audit` skill for security-focused reviews. A feature review is a **scoped guidance review**, not a full audit: trace the relevant trust boundary and data flow without creating permanent audit artifacts.
+- Treat these as Koma's primary security-sensitive surfaces:
+  1. **Page/content-script boundary:** adapter DOM and URL input, isolated-world assumptions, overlay rendering, and untrusted manga text or image metadata.
+  2. **Extension messaging:** `chrome.runtime` / `chrome.tabs` message origin and sender assumptions, payload validation, scope selection, replay, cancellation, and stale-session handling.
+  3. **Local persistence:** settings, translation cache, and reading context in `chrome.storage`; scope separation, retention, reset behavior, data minimization, and quota/failure handling.
+  4. **BYOK provider boundary:** credential handling, request construction, provider output normalization, and preventing secrets or raw vendor payloads from entering logs or domain state.
+  5. **Model and rendering boundary:** untrusted page/model text entering context, prompts, or DOM; verify the normalized contract and safe text rendering.
+- Use the scoped review when a change touches one of these surfaces. Do not probe live manga sites, provider endpoints, user accounts, or production extension state. Use dummy data and local fixtures only.
+- Run a **full security audit** only when the user explicitly requests a codebase audit/penetration test, a full/comprehensive/end-to-end review, or audit report artifacts. Follow the complete `security-audit` skill workflow, including its OS-sandbox requirements, coverage tracking, independent verification, and report validation. If the required sandbox cannot be enforced, do not run target-controlled tests/builds; report the exact validation blocker instead.

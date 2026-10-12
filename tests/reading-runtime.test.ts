@@ -396,6 +396,9 @@ describe('Popup to reader to worker session commands', () => {
       release(response());
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(content.sessionContextManager.getDialogueCount()).toBe(0);
+      expect(Object.keys(local).filter((key) => key.startsWith('koma_context:v1:'))).toHaveLength(
+        0
+      );
       expect(Object.keys(local).filter((key) => key.startsWith('koma_cache:'))).toHaveLength(0);
       expect(document.querySelectorAll('[data-koma-wrapper]')).toHaveLength(0);
       expect(fetchFn).toHaveBeenCalledTimes(1);
@@ -476,5 +479,26 @@ describe('Popup to reader to worker session commands', () => {
     document.dispatchEvent(new Event('visibilitychange'));
     await ready(6);
     expect(fetchFn).toHaveBeenCalledTimes(6);
+  });
+
+  it('clears persisted reader context from the popup without deleting provider settings', async () => {
+    const { click, ready, popup, local, content } = await setup();
+    click('Translate');
+    await ready(3);
+    await vi.waitFor(() =>
+      expect(Object.keys(local).some((key) => key.startsWith('koma_context:v1:'))).toBe(true)
+    );
+
+    const savedSettings = local.koma_provider_settings;
+    popup.getElementById('btn-reset-context')!.click();
+    await vi.waitFor(() =>
+      expect(popup.getElementById('settings-feedback')?.textContent).toContain(
+        'Context cleared for this reading scope.'
+      )
+    );
+
+    expect(Object.keys(local).some((key) => key.startsWith('koma_context:v1:'))).toBe(false);
+    expect(local.koma_provider_settings).toEqual(savedSettings);
+    expect(content.sessionContextManager.getDialogueCount()).toBe(0);
   });
 });
