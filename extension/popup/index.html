@@ -371,6 +371,69 @@
         color: var(--danger);
         display: block;
       }
+
+      .context-list {
+        list-style: none;
+        margin: 0 0 10px;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .context-row {
+        background-color: #0f172a;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+      }
+
+      .context-text {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 6px;
+        margin: 0;
+        font-size: 12px;
+        color: var(--text-primary);
+        overflow-wrap: anywhere;
+      }
+
+      .context-term {
+        font-weight: 600;
+      }
+
+      .context-arrow {
+        color: var(--text-secondary);
+      }
+
+      .context-detail {
+        font-size: 11px;
+        color: var(--text-secondary);
+        margin: 3px 0 0;
+        overflow-wrap: anywhere;
+      }
+
+      .context-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+      }
+
+      .context-actions .btn-small {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .context-badge {
+        font-size: 10px;
+        background-color: rgba(99, 102, 241, 0.15);
+        color: #a5b4fc;
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        padding: 1px 7px;
+        border-radius: 9999px;
+        font-weight: 600;
+      }
     </style>
   </head>
   <body>
@@ -439,6 +502,98 @@
       <div class="diagnostic-item">
         <span>Detected Images:</span>
         <span id="diag-img-count" style="color: var(--text-muted)">-</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <button
+        id="btn-toggle-context"
+        class="settings-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="context-panel"
+      >
+        <span>Reading Context</span>
+        <span id="context-chevron">▾</span>
+      </button>
+
+      <div id="context-panel" class="settings-panel">
+        <p id="context-status" class="form-help" role="status" aria-live="polite">
+          Checking reader session...
+        </p>
+
+        <div id="context-scope" hidden>
+          <div class="status-row">
+            <span>Series</span>
+            <span class="status-value" id="context-series">-</span>
+          </div>
+          <div class="status-row">
+            <span>Chapter</span>
+            <span class="status-value" id="context-chapter">-</span>
+          </div>
+          <div class="status-row">
+            <span>Target language</span>
+            <span class="status-value" id="context-language">-</span>
+          </div>
+          <div class="status-row">
+            <span>Dialogue kept</span>
+            <span class="status-value" id="context-dialogue-count">-</span>
+          </div>
+        </div>
+
+        <div id="context-dialogue-section" hidden>
+          <p class="form-label">Recent dialogue</p>
+          <ul id="context-dialogue-list" class="context-list"></ul>
+        </div>
+
+        <div id="context-glossary-section" hidden>
+          <p class="form-label">Glossary</p>
+          <ul id="context-glossary-list" class="context-list"></ul>
+        </div>
+
+        <form id="context-term-form">
+          <div class="form-group">
+            <label class="form-label" for="context-original">Original term</label>
+            <input
+              id="context-original"
+              class="form-input"
+              type="text"
+              maxlength="500"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <p id="context-edit-note" class="form-help" hidden>
+              Locked while editing. Rename a term with Remove and Add.
+            </p>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="context-translation">Translation</label>
+            <input
+              id="context-translation"
+              class="form-input"
+              type="text"
+              maxlength="500"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+          <label class="checkbox-label" for="context-pin">
+            <input id="context-pin" type="checkbox" /> Pin this term
+          </label>
+          <p class="form-help">
+            Pinned terms are mandatory context. Model suggestions cannot replace them.
+          </p>
+          <div class="settings-btn-row">
+            <button id="btn-save-term" class="btn btn-secondary" type="submit" disabled>
+              Save Term
+            </button>
+            <button id="btn-cancel-term" class="btn btn-secondary" type="button" hidden>
+              Cancel
+            </button>
+          </div>
+        </form>
+
+        <p id="context-feedback" class="feedback-msg" role="status" aria-live="polite"></p>
       </div>
     </div>
 

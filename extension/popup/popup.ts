@@ -12,6 +12,10 @@ import {
   DiagnosticReport,
   ResetContextResponse,
   ReadingSessionResponse,
+  type ContextCommandOperation,
+  type ContextCommandOutcome,
+  type ContextCommandResponse,
+  type ContextView,
 } from '@shared/messages';
 import type { ReadingSessionState } from '@core/orchestrator/types';
 
@@ -63,6 +67,28 @@ export async function initializePopup(root: Document = globalThis.document): Pro
   const saveSettingsBtn = document.getElementById('btn-save-settings') as HTMLButtonElement;
   const resetContextBtn = document.getElementById('btn-reset-context') as HTMLButtonElement;
   const feedbackEl = document.getElementById('settings-feedback') as HTMLElement;
+
+  const toggleContextBtn = document.getElementById('btn-toggle-context') as HTMLButtonElement;
+  const contextPanel = document.getElementById('context-panel') as HTMLElement;
+  const contextChevron = document.getElementById('context-chevron') as HTMLElement;
+  const contextStatus = document.getElementById('context-status') as HTMLElement;
+  const contextScope = document.getElementById('context-scope') as HTMLElement;
+  const contextSeries = document.getElementById('context-series') as HTMLElement;
+  const contextChapter = document.getElementById('context-chapter') as HTMLElement;
+  const contextLanguage = document.getElementById('context-language') as HTMLElement;
+  const contextDialogueCount = document.getElementById('context-dialogue-count') as HTMLElement;
+  const contextDialogueSection = document.getElementById('context-dialogue-section') as HTMLElement;
+  const contextDialogueList = document.getElementById('context-dialogue-list') as HTMLElement;
+  const contextGlossarySection = document.getElementById('context-glossary-section') as HTMLElement;
+  const contextGlossaryList = document.getElementById('context-glossary-list') as HTMLElement;
+  const contextForm = document.getElementById('context-term-form') as HTMLFormElement;
+  const contextOriginal = document.getElementById('context-original') as HTMLInputElement;
+  const contextTranslation = document.getElementById('context-translation') as HTMLInputElement;
+  const contextPin = document.getElementById('context-pin') as HTMLInputElement;
+  const saveTermBtn = document.getElementById('btn-save-term') as HTMLButtonElement;
+  const cancelTermBtn = document.getElementById('btn-cancel-term') as HTMLButtonElement;
+  const contextEditNote = document.getElementById('context-edit-note') as HTMLElement;
+  const contextFeedback = document.getElementById('context-feedback') as HTMLElement;
 
   let activeTabId: number | undefined;
   let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
@@ -183,6 +209,8 @@ export async function initializePopup(root: Document = globalThis.document): Pro
           statusEl.style.color = 'var(--danger)';
         } else if (message.status === 'completed') {
           statusEl.style.color = 'var(--success)';
+          // A newly accepted page changes the dialogue the next request will carry.
+          if (contextPanel?.classList.contains('open')) loadContext();
         } else {
           statusEl.style.color = 'var(--text-primary)';
         }
@@ -351,6 +379,7 @@ export async function initializePopup(root: Document = globalThis.document): Pro
               if (imageCountEl) imageCountEl.textContent = `${response.imageCount} detected`;
               supported = response.isSupportedSite === true;
               applySession(response.session);
+              loadContext();
             }
           }
         );
@@ -538,6 +567,308 @@ export async function initializePopup(root: Document = globalThis.document): Pro
     } finally {
       saveSettingsBtn.disabled = false;
     }
+  });
+
+  const LANGUAGE_LABELS: Record<string, string> = {
+    id: 'Indonesian (Bahasa Indonesia)',
+    en: 'English',
+  };
+
+  const OUTCOME_COPY: Record<ContextCommandOutcome, string> = {
+    added: 'Term added.',
+    updated: 'Updated existing term.',
+    unchanged: 'No changes to save.',
+    pinned: 'Term pinned.',
+    unpinned: 'Term unpinned.',
+    removed: 'Term removed.',
+  };
+
+  let contextFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
+  // Responses from superseded commands must not render over the newest view.
+  let contextRequestToken = 0;
+  // An explicit edit keeps the term key fixed; renaming goes through Remove and Add.
+  let editingKey: string | undefined;
+  let contextWithinChapter = false;
+
+  function refreshInputState(): void {
+    const locked = !contextWithinChapter || editingKey !== undefined;
+    contextOriginal.disabled = locked;
+    contextTranslation.disabled = !contextWithinChapter;
+    contextPin.disabled = !contextWithinChapter;
+    cancelTermBtn.hidden = editingKey === undefined;
+    contextEditNote.hidden = editingKey === undefined;
+    updateSaveState();
+  }
+
+  function showContextFeedback(text: string, type: 'success' | 'error', duration = 6000): void {
+    if (!contextFeedback) return;
+    if (contextFeedbackTimer) clearTimeout(contextFeedbackTimer);
+    contextFeedback.className = `feedback-msg ${type}`;
+    contextFeedback.textContent = text;
+    if (duration > 0) {
+      contextFeedbackTimer = setTimeout(() => {
+        contextFeedback.className = 'feedback-msg';
+        contextFeedback.textContent = '';
+      }, duration);
+    }
+  }
+
+  function setContextNote(text: string): void {
+    if (!contextStatus) return;
+    contextStatus.hidden = !text;
+    contextStatus.textContent = text;
+  }
+
+  function contextCommand(
+    operation: ContextCommandOperation,
+    onDone: (response: ContextCommandResponse) => void
+  ): void {
+    if (!activeTabId) return;
+    const token = ++contextRequestToken;
+    chrome.tabs.sendMessage(
+      activeTabId,
+      {
+        type: EXTENSION_MESSAGE_TYPES.CONTEXT_COMMAND,
+        targetLanguage: settings?.targetLanguage || targetLangSelect.value,
+        ...operation,
+      },
+      (response: ContextCommandResponse | undefined) => {
+        // A newer command already rendered; only a failed action still owes the user feedback.
+        if (token !== contextRequestToken) {
+          if (response && !response.success)
+            showContextFeedback(
+              response.error ?? 'Could not update the glossary. Try again.',
+              'error'
+            );
+          return;
+        }
+        if (chrome.runtime.lastError || !response) {
+          onDone({
+            success: false,
+            error: 'Could not reach the reader. Reload the chapter and try again.',
+          });
+          return;
+        }
+        onDone(response);
+      }
+    );
+  }
+
+  function renderContext(view: ContextView | undefined): void {
+    if (!view) return;
+    const inChapter = view.supported && Boolean(view.scope);
+    contextScope.hidden = !inChapter;
+    contextWithinChapter = inChapter;
+    if (!inChapter) {
+      // Leaving a supported chapter invalidates any in-progress edit.
+      contextForm.reset();
+      editingKey = undefined;
+    }
+    refreshInputState();
+
+    if (!view.supported) {
+      setContextNote('Open a supported MangaDex chapter to see its reading context.');
+      contextDialogueSection.hidden = true;
+      contextGlossarySection.hidden = true;
+      updateSaveState();
+      return;
+    }
+
+    contextSeries.textContent = view.seriesTitle || view.scope?.seriesId || 'Not identified';
+    contextChapter.textContent = view.scope?.chapterId ?? '-';
+    contextLanguage.textContent =
+      LANGUAGE_LABELS[view.scope?.targetLanguage ?? ''] ?? view.scope?.targetLanguage ?? '-';
+    contextDialogueCount.textContent = `${view.dialogueCount} of ${view.dialogueLimit} kept`;
+
+    contextDialogueSection.hidden = view.dialogue.length === 0;
+    contextDialogueList.replaceChildren(
+      ...view.dialogue.map((entry) => {
+        const row = document.createElement('li');
+        row.className = 'context-row';
+        const text = document.createElement('p');
+        text.className = 'context-text';
+        if (entry.sourceText) {
+          const source = document.createElement('span');
+          source.className = 'context-term';
+          source.textContent = entry.sourceText;
+          const arrow = document.createElement('span');
+          arrow.className = 'context-arrow';
+          arrow.textContent = '→';
+          text.append(source, arrow);
+        }
+        const translated = document.createElement('span');
+        translated.textContent = entry.translatedText;
+        text.append(translated);
+        row.append(text);
+
+        const details = [
+          entry.speaker,
+          typeof entry.pageIndex === 'number' ? `Page ${entry.pageIndex + 1}` : '',
+        ].filter(Boolean);
+        if (details.length) {
+          const detail = document.createElement('p');
+          detail.className = 'context-detail';
+          detail.textContent = details.join(' · ');
+          row.append(detail);
+        }
+        return row;
+      })
+    );
+
+    contextGlossarySection.hidden = view.glossary.length === 0;
+    contextGlossaryList.replaceChildren(
+      ...view.glossary.map((entry) => {
+        const row = document.createElement('li');
+        row.className = 'context-row';
+
+        const text = document.createElement('p');
+        text.className = 'context-text';
+        const original = document.createElement('span');
+        original.className = 'context-term';
+        original.textContent = entry.original;
+        const arrow = document.createElement('span');
+        arrow.className = 'context-arrow';
+        arrow.textContent = '→';
+        const translation = document.createElement('span');
+        translation.textContent = entry.translation;
+        text.append(original, arrow, translation);
+        if (entry.isHard) {
+          const badge = document.createElement('span');
+          badge.className = 'context-badge';
+          badge.textContent = 'Pinned';
+          text.append(badge);
+        }
+        row.append(text);
+
+        const actions = document.createElement('div');
+        actions.className = 'context-actions';
+        const pin = document.createElement('button');
+        pin.type = 'button';
+        pin.className = 'btn-small';
+        pin.textContent = entry.isHard ? 'Unpin' : 'Pin';
+        pin.setAttribute('aria-label', `${entry.isHard ? 'Unpin' : 'Pin'} ${entry.original}`);
+        pin.addEventListener('click', () =>
+          contextCommand(
+            { operation: 'setPinned', original: entry.original, pinned: !entry.isHard },
+            applyContextResponse
+          )
+        );
+        const edit = document.createElement('button');
+        edit.type = 'button';
+        edit.className = 'btn-small';
+        edit.textContent = 'Edit';
+        edit.setAttribute('aria-label', `Edit ${entry.original}`);
+        edit.addEventListener('click', () => {
+          editingKey = entry.original;
+          contextOriginal.value = entry.original;
+          contextTranslation.value = entry.translation;
+          contextPin.checked = Boolean(entry.isHard);
+          refreshInputState();
+          contextTranslation.focus();
+        });
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn-small';
+        remove.textContent = 'Remove';
+        remove.setAttribute('aria-label', `Remove ${entry.original}`);
+        remove.addEventListener('click', () => {
+          if (
+            !window.confirm(
+              'Remove this term from the glossary? The next request uses the updated context.'
+            )
+          )
+            return;
+          contextCommand({ operation: 'remove', original: entry.original }, applyContextResponse);
+        });
+        actions.append(pin, edit, remove);
+        row.append(actions);
+        return row;
+      })
+    );
+
+    if (!view.dialogue.length) {
+      setContextNote('No dialogue kept yet. Translate a page and it appears here.');
+    } else if (!view.glossary.length) {
+      setContextNote('No glossary terms yet. Add one below to keep a translation consistent.');
+    } else {
+      setContextNote('');
+    }
+    updateSaveState();
+  }
+
+  function applyContextResponse(response: ContextCommandResponse): void {
+    renderContext(response.view);
+    if (!response.success) {
+      showContextFeedback(response.error ?? 'Could not update the glossary. Try again.', 'error');
+      return;
+    }
+    const outcome = response.outcome;
+    if (!outcome) return;
+    const text = OUTCOME_COPY[outcome];
+    showContextFeedback(
+      outcome === 'unchanged'
+        ? text
+        : `${text} Applies to the next request. Retranslate Visible Page updates this page now.`,
+      'success'
+    );
+  }
+
+  function updateSaveState(): void {
+    if (!saveTermBtn) return;
+    saveTermBtn.disabled =
+      !contextWithinChapter || !contextOriginal.value.trim() || !contextTranslation.value.trim();
+  }
+
+  function loadContext(): void {
+    if (!activeTabId) return;
+    setContextNote('Checking reader session...');
+    contextCommand({ operation: 'view' }, (response) => {
+      if (!response.success) {
+        setContextNote(
+          response.error ?? 'Could not load the reading context. Reload the chapter and try again.'
+        );
+        return;
+      }
+      renderContext(response.view);
+    });
+  }
+
+  toggleContextBtn?.addEventListener('click', () => {
+    const isOpen = contextPanel.classList.toggle('open');
+    contextChevron.textContent = isOpen ? '▴' : '▾';
+    toggleContextBtn.setAttribute('aria-expanded', String(isOpen));
+    if (isOpen) loadContext();
+  });
+
+  contextOriginal?.addEventListener('input', updateSaveState);
+  contextTranslation?.addEventListener('input', updateSaveState);
+
+  contextForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    saveTermBtn.disabled = true;
+    const term = { original: contextOriginal.value, translation: contextTranslation.value };
+    contextCommand({ operation: 'save', ...term, pinned: contextPin.checked }, (response) => {
+      if (response.success) {
+        contextForm.reset();
+        editingKey = undefined;
+        refreshInputState();
+      }
+      applyContextResponse(response);
+    });
+  });
+
+  cancelTermBtn?.addEventListener('click', () => {
+    contextForm.reset();
+    editingKey = undefined;
+    refreshInputState();
+    contextOriginal.focus();
+  });
+
+  contextForm?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || editingKey === undefined) return;
+    contextForm.reset();
+    editingKey = undefined;
+    refreshInputState();
   });
 
   resetContextBtn?.addEventListener('click', () => {

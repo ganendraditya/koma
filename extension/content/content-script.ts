@@ -6,11 +6,14 @@
 import { MangaDexAdapter } from '@adapters';
 import {
   EXTENSION_MESSAGE_TYPES,
+  isContextCommandRequest,
   type DiagnosticReport,
   type PingResponse,
   type CheckPageStatusResponse,
   type ResetContextRequest,
   type ResetContextResponse,
+  type ContextCommandResponse,
+  type ContextView,
   type RenderTranslationOverlayRequest,
   type TranslateActivePageRequest,
   type TranslateActivePageResponse,
@@ -395,6 +398,131 @@ export function handleContentScriptMessage(
     );
 
     // Keep message channel open for async response
+    return true;
+  }
+
+  if (req.type === EXTENSION_MESSAGE_TYPES.CONTEXT_COMMAND) {
+    if (!isContextCommandRequest(req)) {
+      sendResponse?.({
+        success: false,
+        error: 'Invalid context command.',
+      } satisfies ContextCommandResponse);
+      return false;
+    }
+    const command = req;
+    const identity = adapter.getReadingIdentity();
+    // The glossary is scoped by series and target language, so show the language this session is
+    // actually using rather than whatever the popup has selected.
+    const scopeLanguage = (currentTargetLanguage || command.targetLanguage || '').trim();
+    const scopeIsLive = Boolean(currentTargetLanguage);
+
+    const readView = (): ContextView => ({
+      supported: Boolean(identity),
+      ...(identity
+        ? {
+            scope: {
+              site: identity.site,
+              chapterId: identity.chapterId,
+              ...(identity.seriesId ? { seriesId: identity.seriesId } : {}),
+              targetLanguage: scopeLanguage,
+            },
+          }
+        : {}),
+      ...(contextManager.seriesTitle ? { seriesTitle: contextManager.seriesTitle } : {}),
+      dialogue: contextManager.getDialogueHistory(),
+      dialogueCount: contextManager.getDialogueCount(),
+      dialogueLimit: contextManager.getMaxDialogueEntries(),
+      glossary: contextManager.getGlossary(),
+      glossaryLimit: contextManager.getMaxGlossaryEntries(),
+    });
+
+    // The popup can open before any translation ran, so the stored scope has to be loaded first or
+    // an otherwise usable glossary would read as empty. A live session already carries its scope;
+    // switching it to another target language would drop that session's dialogue.
+    const ensureScope = async () => {
+      if (scopeIsLive || !scopeLanguage || !identity) return;
+      await contextManager.setScope?.({ reading: identity, targetLanguage: scopeLanguage });
+      await contextManager.ready?.();
+    };
+
+    if (command.operation === 'view') {
+      void (async () => {
+        await ensureScope();
+        sendResponse?.({ success: true, view: readView() } satisfies ContextCommandResponse);
+      })();
+      return true;
+    }
+
+    const fail = (error: string) => {
+      sendResponse?.({ success: false, error, view: readView() } satisfies ContextCommandResponse);
+      return false;
+    };
+
+    if (cacheClearing) return fail('Wait for Clear Cache to finish before editing the glossary.');
+    if (contextResetCount)
+      return fail('Wait for Reset Context to finish before editing the glossary.');
+    if (!identity) return fail('Open a supported MangaDex chapter to edit its glossary.');
+    if (!scopeLanguage) return fail('Choose a target language before editing the glossary.');
+
+    const original = (command.original ?? '').trim();
+
+    const apply = async (): Promise<ContextCommandResponse> => {
+      await ensureScope();
+
+      const existing = contextManager.getGlossary().find((entry) => entry.original === original);
+
+      if (command.operation === 'save') {
+        const translation = (command.translation ?? '').trim();
+        if (!original || !translation) {
+          return { success: false, error: 'Enter both the original term and its translation.' };
+        }
+        if (
+          existing &&
+          existing.translation === translation &&
+          existing.isHard === command.pinned
+        ) {
+          return { success: true, outcome: 'unchanged' };
+        }
+        const stored = contextManager.addGlossaryEntry({
+          original,
+          translation,
+          isHard: command.pinned,
+        });
+        if (!stored) {
+          return {
+            success: false,
+            error: 'This series glossary is full. Remove a pinned term before adding another one.',
+          };
+        }
+        return { success: true, outcome: existing ? 'updated' : 'added' };
+      }
+
+      if (!existing) return { success: false, error: 'That term is no longer in the glossary.' };
+
+      if (command.operation === 'setPinned') {
+        if (existing.isHard === command.pinned) return { success: true, outcome: 'unchanged' };
+        contextManager.addGlossaryEntry({ ...existing, isHard: command.pinned });
+        return { success: true, outcome: command.pinned ? 'pinned' : 'unpinned' };
+      }
+
+      if (!contextManager.removeGlossaryEntry(original)) {
+        return { success: false, error: 'That term is no longer in the glossary.' };
+      }
+      return { success: true, outcome: 'removed' };
+    };
+
+    void apply()
+      .then(async (result) => {
+        await contextManager.flush?.();
+        sendResponse?.({ ...result, view: readView() } satisfies ContextCommandResponse);
+      })
+      .catch(() =>
+        sendResponse?.({
+          success: false,
+          error: 'Could not save the glossary change. Try again.',
+          view: readView(),
+        } satisfies ContextCommandResponse)
+      );
     return true;
   }
 

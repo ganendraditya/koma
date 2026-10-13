@@ -136,6 +136,30 @@ describe('TranslationOrchestrator', () => {
     }
   );
 
+  it('keeps a rendered page completed when acceptance rejects', async () => {
+    vi.mocked(mockAdapter.detectMangaImages).mockReturnValue([{ id: 'img-1', pageIndex: 0 }]);
+    const result: TranslationResult = {
+      pageId: 'page_0',
+      imageId: 'img-1',
+      sourceLanguage: 'ja',
+      targetLanguage: 'id',
+      bubbles: [],
+    };
+    vi.mocked(mockProvider.translatePage).mockResolvedValue(result);
+    mockProvider.acceptTranslation = vi.fn(async () => {
+      throw new DOMException('Reading context changed.', 'AbortError');
+    });
+    const onError = vi.fn();
+    const orchestrator = new TranslationOrchestrator(mockProvider, mockAdapter, mockRenderer);
+    vi.mocked(mockRenderer.render).mockClear();
+
+    await orchestrator.translateNext({ onError });
+
+    await vi.waitFor(() => expect(orchestrator.getState().get('img-1')?.status).toBe('completed'));
+    expect(mockRenderer.render).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it('explicit retranslation bypasses replay while preserving the displayed result until replacement', async () => {
     vi.mocked(mockAdapter.detectMangaImages).mockReturnValue([{ id: 'img-1', pageIndex: 0 }]);
     vi.mocked(mockProvider.translatePage).mockResolvedValue({

@@ -71,6 +71,7 @@ export interface IContextManager {
   getDialogueCount(): number;
   setMaxDialogueEntries(max: number): void;
   getMaxDialogueEntries(): number;
+  getMaxGlossaryEntries(): number;
   reset(): void | Promise<void>;
   resetScope?(scope: ContextScope): Promise<void>;
   ready?(): Promise<void>;

@@ -391,7 +391,16 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       }
       if (signal.aborted) return;
       if (this.overlaysVisible) this.render(result);
-      if (this.provider.acceptTranslation) await this.provider.acceptTranslation(result, signal);
+      if (this.provider.acceptTranslation) {
+        try {
+          await this.provider.acceptTranslation(result, signal);
+        } catch (error) {
+          if (signal.aborted) return;
+          // The overlay is already on screen. A rejected acceptance must not turn a usable
+          // translation into a failed page, and a retry would repeat the provider request.
+          console.error('[Koma Orchestrator] Translation acceptance failed', error);
+        }
+      }
       if (signal.aborted) return;
       this.updateState(imageId, { status: 'completed', result });
       this.forcedRequests.delete(imageId);
