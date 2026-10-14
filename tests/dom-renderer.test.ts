@@ -440,6 +440,7 @@ describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
   afterEach(() => {
     renderer.removeAllOverlays();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     container.remove();
   });
 
@@ -575,6 +576,144 @@ describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
     reopened.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(patch.inspected).toBe(false);
     expect(outcome.overlayLayer.querySelector('[data-koma-bubble-readout]')).toBeNull();
+  });
+
+  it('uses a viewport-clamped readout when the image layer is too small to contain one', () => {
+    mockLayout({ overflow: true, width: 4, height: 4 });
+    vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024);
+    vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768);
+    let imageSize = { width: 4, height: 4 };
+    let resizeCallback: ResizeObserverCallback | undefined;
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallback = callback;
+        }
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      }
+    );
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      const box =
+        this.hasAttribute('data-koma-image-id') && this.tagName === 'IMG'
+          ? { left: 20, top: 30, ...imageSize }
+          : this.hasAttribute('data-koma-overlay-layer')
+            ? { left: 20, top: 30, ...imageSize }
+            : this.hasAttribute('data-koma-bubble')
+              ? { left: 20, top: 30, width: 1, height: 1 }
+              : { left: 0, top: 0, width: 885, height: 600 };
+      return {
+        ...box,
+        right: box.left + box.width,
+        bottom: box.top + box.height,
+        x: box.left,
+        y: box.top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+
+    const longResult = pageResult([
+      bubble('bubble_001', {
+        translatedText:
+          'This complete translation is much longer than the tiny patch and must remain readable in the fallback panel.',
+      }),
+    ]);
+    const outcome = renderer.render(longResult, image);
+    const chip = outcome.bubbles[0].clipIndicator!;
+    expect(chip.isConnected).toBe(true);
+    expect(chip.parentElement).toBe(document.body);
+    expect(chip.style.position).toBe('fixed');
+    expect(Number.parseFloat(chip.style.width)).toBeGreaterThanOrEqual(72);
+    expect(Number.parseFloat(chip.style.height)).toBeGreaterThanOrEqual(44);
+    expect(chip.style.left).toBe('20px');
+    expect(chip.style.top).toBe('30px');
+    expect(outcome.wrapperElement.matches('[data-koma-wrapper="true"]')).toBe(true);
+    expect(outcome.overlayLayer.getBoundingClientRect().width).toBe(4);
+    chip.focus();
+    chip.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    const panel = outcome.bubbles[0].readoutElement!;
+    expect(panel.parentElement).toBe(document.body);
+    expect(panel.style.position).toBe('fixed');
+    expect(Number.parseFloat(panel.style.width)).toBeGreaterThan(4);
+    expect(Number.parseFloat(panel.style.maxHeight)).toBeGreaterThan(4);
+    expect(panel.style.left).toBe('20px');
+    expect(panel.style.top).toBe('30px');
+    expect(panel.textContent).toContain('must remain readable in the fallback panel.');
+
+    const rerendered = renderer.render(longResult, image);
+    expect(
+      document.body.querySelectorAll('[data-koma-portal-image-id="img_page_01"]')
+    ).toHaveLength(1);
+    rerendered.bubbles[0].clipIndicator!.click();
+    expect(
+      document.body.querySelectorAll('[data-koma-portal-image-id="img_page_01"]')
+    ).toHaveLength(2);
+
+    rerendered.bubbles[0].readoutElement!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    );
+    imageSize = { width: 400, height: 600 };
+    resizeCallback?.([], {} as ResizeObserver);
+    expect(rerendered.bubbles[0].clipIndicator!.parentElement).toBe(rerendered.overlayLayer);
+    expect(rerendered.bubbles[0].clipIndicator!.hasAttribute('data-koma-portal-image-id')).toBe(
+      false
+    );
+    expect(rerendered.bubbles[0].clipIndicator!.style.position).toBe('absolute');
+
+    expect(renderer.removeOverlay('img_page_01')).toBe(true);
+    expect(container.querySelector('[data-koma-bubble-readout]')).toBeNull();
+    expect(container.querySelector('[data-koma-wrapper]')).toBeNull();
+    expect(
+      document.body.querySelectorAll('[data-koma-portal-image-id="img_page_01"]')
+    ).toHaveLength(0);
+  });
+
+  it('uses the viewport readout when a shallow image has no room near the patch', () => {
+    mockLayout({ overflow: true, width: 240, height: 80 });
+    vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024);
+    vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      const box =
+        this.hasAttribute('data-koma-image-id') && this.tagName === 'IMG'
+          ? { left: 10, top: 20, width: 240, height: 80 }
+          : this.hasAttribute('data-koma-overlay-layer')
+            ? { left: 10, top: 20, width: 240, height: 80 }
+            : this.hasAttribute('data-koma-bubble')
+              ? { left: 20, top: 92, width: 96, height: 8 }
+              : { left: 0, top: 0, width: 885, height: 600 };
+      return {
+        ...box,
+        right: box.left + box.width,
+        bottom: box.top + box.height,
+        x: box.left,
+        y: box.top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+
+    const outcome = renderer.render(
+      pageResult([
+        bubble('bubble_001', {
+          box: { ymin: 900, xmin: 100, ymax: 1000, xmax: 500 },
+          translatedText: 'This complete translation needs more vertical room than the patch.',
+        }),
+      ]),
+      image
+    );
+    outcome.bubbles[0].clipIndicator!.click();
+
+    const panel = outcome.bubbles[0].readoutElement!;
+    expect(panel.parentElement).toBe(document.body);
+    expect(panel.style.position).toBe('fixed');
+    expect(Number.parseFloat(panel.style.maxHeight)).toBeGreaterThanOrEqual(72);
+    expect(panel.textContent).toContain('needs more vertical room than the patch.');
   });
 
   it('keeps the fallback affordance operable while the artwork is being inspected', () => {

@@ -12,17 +12,18 @@ Out of scope: inpainting, sound-effect typography, and OCR.
 
 ## Behavior contract
 
-| Situation                                     | Result                                                                                                                                                      |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pointer enters a patch                        | The patch hides its own paint (fill, border, shadow, text) so the artwork underneath shows. Pointer and focus stay on the patch.                            |
-| Pointer leaves                                | The patch restores the exact paint values it had before inspection.                                                                                         |
-| `Enter` or `Space` on a focused patch         | Toggles the reveal. A keyboard reveal survives pointer movement, so a stray mouse move cannot cancel it.                                                    |
-| `Escape` on a patch, or on an open readout    | Restores the patch, closes the readout, and returns focus to the patch.                                                                                     |
-| Fitted text still overflows at the font floor | The patch gains a `Show all` chip pinned to its bottom-right corner.                                                                                        |
-| Chip activated by pointer or keyboard         | Opens one readout with the complete translation and `Original: <source text>` when the provider returned source text. A second readout replaces the first.  |
-| Overlays hidden, re-shown, or removed         | No orphan chip, readout, or focus rule remains; images return to their pre-Koma margins, and the reader adapter's own `data-koma-image-id` markers survive. |
+| Situation                                                              | Result                                                                                                                                                      |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pointer enters a patch                                                 | The patch hides its own paint (fill, border, shadow, text) so the artwork underneath shows. Pointer and focus stay on the patch.                            |
+| Pointer leaves                                                         | The patch restores the exact paint values it had before inspection.                                                                                         |
+| `Enter` or `Space` on a focused patch                                  | Toggles the reveal. A keyboard reveal survives pointer movement, so a stray mouse move cannot cancel it.                                                    |
+| `Escape` on a patch, or on an open readout                             | Restores the patch, closes the readout, and returns focus to the patch.                                                                                     |
+| Fitted text still overflows at the font floor                          | The patch gains a `Show all` chip pinned to its bottom-right corner.                                                                                        |
+| Chip activated by pointer or keyboard                                  | Opens one readout with the complete translation and `Original: <source text>` when the provider returned source text. A second readout replaces the first.  |
+| Image cannot contain a 72×44px chip or a 220×72px readout with gutters | The control/readout moves to a viewport-clamped portal so the image layer cannot clip it.                                                                   |
+| Overlays hidden, re-shown, or removed                                  | No orphan chip, readout, or focus rule remains; images return to their pre-Koma margins, and the reader adapter's own `data-koma-image-id` markers survive. |
 
-The chip is not a descendant of the patch. The patch clips its own overflow (`overflow: hidden`), so a chip inside it would be clipped and unclickable. The chip is a layer-level sibling, positioned at the patch's bottom-right corner inside the artwork, which keeps it clickable and inside the layer at every size.
+The chip is not a descendant of the patch. The patch clips its own overflow (`overflow: hidden`), so a chip inside it would be clipped and unclickable. On normal images, the chip is a layer-level sibling at the patch's bottom-right corner. When the layer is too small to contain a touch target, the chip becomes a viewport-fixed portal near the patch. The readout also uses a viewport-fixed portal when the image layer cannot contain its minimum readable size; otherwise it stays inside the image layer.
 
 ## Decisions and reasons
 
@@ -30,7 +31,8 @@ The chip is not a descendant of the patch. The patch clips its own overflow (`ov
 - Hover and keyboard toggles are tracked separately: one shared flag lets a mouse move cancel a deliberate keyboard reveal.
 - The chip hides nothing while inspecting: it is Koma's control, not the artwork, and the fallback has to stay reachable by pointer.
 - One readout at a time across all images: two open panels on a long-strip reader hide the pages being compared.
-- The readout is clamped inside the overlay layer: an unclamped panel over neighbouring pages hides the artwork the reader is inspecting.
+- The readout stays inside the overlay layer when the image can contain it. Tiny images use a viewport-clamped portal because their layer clips any panel large enough to read.
+- Tiny-image controls use a viewport-fixed portal with a 72×44px target because a smaller image cannot contain the full label and a touch target.
 - Focus rules ship as one `<style>` per layer rather than an inline outline: `:focus-visible` cannot be expressed inline, and an always-on outline would draw a ring on every patch during normal reading.
 - The overlay layer is pinned to the image box in pixels: normalized boxes are image-relative, so a layer that follows a wider wrapper resolves every horizontal percentage against the surrounding column instead of the artwork.
 
@@ -51,9 +53,9 @@ The chip and panel borders were raised from `rgba(0,0,0,0.35)` (2.43:1, failing 
 
 ## Automated verification
 
-- `tests/dom-renderer.test.ts`: 28 tests in the file, 10 of them added for KOMA-017 (hover reveal and exact restore, keyboard toggle and Escape, reveal surviving pointer movement, chip only when the text overflows, chip placement on the layer, readout content with and without source text, single readout, Escape from inside the panel, one focus rule set per layer, cleanup, layer pinned to the image box with a fill-the-wrapper fallback, drift measurement).
-- Full repository suite: 258 tests pass. `typecheck`, `lint`, `format:check`, `build`, and `git diff --check` all exit 0.
-- Sandboxed reruns of the same five modes on the delivered revision: all exit 0.
+- `tests/dom-renderer.test.ts`: 30 tests in the file, 12 of them added for KOMA-017 (hover reveal and exact restore, keyboard toggle and Escape, reveal surviving pointer movement, chip only when the text overflows, chip placement on the layer, readout content with and without source text, single readout, Escape from inside the panel, one focus rule set per layer, cleanup, tiny-image and shallow-edge viewport controls/readout including resize and re-render cleanup, layer pinned to the image box with a fill-the-wrapper fallback, drift measurement).
+- On the original KOMA-017 commit (`42fe068`): 258 tests pass. `typecheck`, `lint`, `format:check`, `build`, and `git diff --check` all exit 0.
+- Sandboxed reruns of those five modes on `42fe068`: all exit 0.
 
 ## Chrome smoke evidence
 
@@ -92,7 +94,13 @@ The smoke run that produced the table above first failed the coverage check, whi
 
 ## Limits
 
-- The chip covers the patch's bottom-right corner while the patch is small; the translation text underneath that corner is covered until the readout opens. The alternative, a chip outside the layer, is clipped at the image edge on the last page of a chapter.
+- On normal-sized images, the layer-level chip covers the patch's bottom-right corner while the patch is small; the translation text underneath that corner is covered until the readout opens. Images too small to contain a usable control instead get a viewport-fixed chip.
 - Clipping is detected by comparing `scrollHeight`/`scrollWidth` against the patch box at the font floor. A patch whose text fits after a re-render loses its chip, which is intended, but a browser that reports no overflow for an absolutely positioned patch would not surface the fallback.
 - The smoke uses a synthetic reader page and a fixture provider response. It verifies inspection, fallback, placement, cleanup, and contrast against real Chrome layout, not model bounding-box accuracy on real artwork.
 - `measureLayoutDrift` covers the renderer's own placement. Model bounding-box error needs artwork ground truth and is not measured here.
+
+## Review follow-up: tiny image fallback
+
+The review found that a readout inside a layer smaller than 8px could not be opened readably. The fix uses a body-level, viewport-fixed control when the rendered layer is narrower than 72px or shorter than 44px, and moves the complete-text readout to the same portal when there is not enough room for a 220×72px panel with 4px gutters above or below its patch. `ResizeObserver` moves the chip back into the image layer when the artwork grows; rerender and overlay cleanup remove portal controls.
+
+Verification on Headless Chrome for Testing 155.0.8059.39: the synthetic reader image was resized from 400×600px to 4×4px. The chip measured 72×44px, stayed within the viewport, and showed a 2px focus ring. Pressing Enter opened a focused, fixed 220px-wide readout containing the full translation and source text; Escape closed it. Resizing the image back moved the chip into the layer. Cleanup left zero portal nodes and zero console errors. `tests/dom-renderer.test.ts` covers the 4×4px case, keyboard activation, a shallow image near a patch, rerender cleanup, and resize back to the layer. Final repository checks passed: 260 tests, typecheck, lint, format, build, and diff check.

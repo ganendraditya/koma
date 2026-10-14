@@ -88,6 +88,8 @@ export class DOMOverlayRenderer {
       );
     }
 
+    const previous = this.renderedOverlays.get(result.imageId);
+    if (previous) this.cleanupInteractiveControls(previous);
     this.disconnectResizeObserver(result.imageId);
 
     // 1. Establish or reuse the relative wrapper around the image
@@ -138,6 +140,7 @@ export class DOMOverlayRenderer {
     );
 
     if (wrappers.length > 0) {
+      this.removePortalControlsForImage(imageId);
       wrappers.forEach((wrapper) => this.unwrapElement(wrapper));
       return true;
     }
@@ -159,6 +162,9 @@ export class DOMOverlayRenderer {
       '.koma-image-wrapper[data-koma-wrapper="true"]'
     );
     allWrappers.forEach((wrapper) => this.unwrapElement(wrapper));
+    document.querySelectorAll<HTMLElement>('[data-koma-portal-image-id]').forEach((control) => {
+      control.remove();
+    });
   }
 
   /**
@@ -392,9 +398,7 @@ export class DOMOverlayRenderer {
         this.textOverflowsContainer(textElement, bubbleElement)
       ) {
         rendered.clipIndicator = this.createClipIndicator(rendered, percentages);
-        // The chip lives on the layer, not inside the patch: the patch clips its own overflow, and a
-        // clipped control cannot be clicked.
-        overlayLayer.appendChild(rendered.clipIndicator);
+        this.syncClipIndicator(rendered, overlayLayer);
       }
     }
 
@@ -544,6 +548,7 @@ export class DOMOverlayRenderer {
       'z-index': '20',
       'pointer-events': 'auto',
     });
+
     const open = (event: Event) => {
       event.stopPropagation();
       this.openReadout(rendered);
@@ -558,8 +563,82 @@ export class DOMOverlayRenderer {
     return chip;
   }
 
+  private syncClipIndicator(rendered: RenderedBubbleOverlay, overlayLayer: HTMLElement): void {
+    const chip = rendered.clipIndicator;
+    if (!chip) return;
+
+    const layerRect = overlayLayer.getBoundingClientRect();
+    const layerWidth = layerRect.width || overlayLayer.clientWidth;
+    const layerHeight = layerRect.height || overlayLayer.clientHeight;
+    if (layerWidth <= 0 || layerHeight <= 0) {
+      chip.removeAttribute('data-koma-portal-image-id');
+      chip.remove();
+      return;
+    }
+    // The layer clips descendants, so move the chip out when it cannot contain the full control.
+    if (layerWidth < 72 || layerHeight < 44) {
+      const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+      const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+      const availableWidth = Math.max(viewportWidth - 16, 0);
+      const availableHeight = Math.max(viewportHeight - 16, 0);
+      if (availableWidth <= 0 || availableHeight <= 0) return;
+
+      const patchRect = rendered.element.getBoundingClientRect();
+      const width = Math.min(72, availableWidth);
+      const height = Math.min(44, availableHeight);
+      const left = Math.max(8, Math.min(patchRect.left, viewportWidth - width - 8));
+      const top = Math.max(8, Math.min(patchRect.top, viewportHeight - height - 8));
+      const imageId = overlayLayer.getAttribute('data-koma-image-id');
+      if (imageId) chip.setAttribute('data-koma-portal-image-id', imageId);
+      applyImportantStyles(chip, {
+        position: 'fixed',
+        top: `${top}px`,
+        left: `${left}px`,
+        transform: 'none',
+        width: `${width}px`,
+        height: `${height}px`,
+        'min-width': `${width}px`,
+        'min-height': `${height}px`,
+        'box-sizing': 'border-box',
+        display: 'inline-flex',
+        'align-items': 'center',
+        'justify-content': 'center',
+        'white-space': 'nowrap',
+        'z-index': '2147483647',
+      });
+      const portalRoot = document.body ?? document.documentElement;
+      if (chip.parentElement !== portalRoot) portalRoot.appendChild(chip);
+      return;
+    }
+
+    chip.removeAttribute('data-koma-portal-image-id');
+    for (const property of [
+      'width',
+      'height',
+      'box-sizing',
+      'display',
+      'align-items',
+      'justify-content',
+      'white-space',
+    ]) {
+      chip.style.removeProperty(property);
+    }
+    const percentages = boxToPercentages(rendered.bubble.box);
+    const edge = (start: string, size: string) => `${parseFloat(start) + parseFloat(size)}%`;
+    applyImportantStyles(chip, {
+      position: 'absolute',
+      top: edge(percentages.top, percentages.height),
+      left: edge(percentages.left, percentages.width),
+      transform: 'translate(calc(-100% - 2px), calc(-100% - 2px))',
+      'min-height': '24px',
+      'min-width': '44px',
+      'z-index': '20',
+    });
+    if (chip.parentElement !== overlayLayer) overlayLayer.appendChild(chip);
+  }
+
   /**
-   * Opens the clipped-text readout near its patch, clamped inside the overlay layer.
+   * Opens the readout near its patch, using the layer or a viewport portal when space is short.
    */
   private openReadout(rendered: RenderedBubbleOverlay): void {
     if (rendered.readoutElement?.isConnected) return;
@@ -569,8 +648,19 @@ export class DOMOverlayRenderer {
     if (!layer) return;
     const layerRect = layer.getBoundingClientRect();
     if (layerRect.width <= 0 || layerRect.height <= 0) return;
-
     const patchRect = rendered.element.getBoundingClientRect();
+    const inlineReadoutWidth = 220;
+    const inlineReadoutHeight = 72;
+    const inlineGutter = 4;
+    const patchTop = patchRect.top - layerRect.top;
+    const inlineHeightBelow = layerRect.height - patchTop - inlineGutter;
+    const inlineHeightAbove = patchTop - inlineGutter;
+    const placeAbovePatch =
+      inlineHeightBelow < inlineReadoutHeight && inlineHeightAbove >= inlineReadoutHeight;
+    const useViewportReadout =
+      layerRect.width < inlineReadoutWidth + inlineGutter * 2 ||
+      Math.max(inlineHeightBelow, inlineHeightAbove) < inlineReadoutHeight;
+
     const panel = document.createElement('div');
     panel.className = 'koma-bubble-readout';
     panel.setAttribute('data-koma-bubble-readout', rendered.bubble.id);
@@ -612,18 +702,56 @@ export class DOMOverlayRenderer {
       panel.append(source);
     }
 
-    const width = Math.min(Math.max(patchRect.width, 220), layerRect.width - 8);
-    const left = Math.min(
-      Math.max(patchRect.left - layerRect.left, 4),
-      layerRect.width - width - 4
-    );
-    const top = Math.min(patchRect.top - layerRect.top, layerRect.height - 8);
+    let host = layer;
+    let position: 'absolute' | 'fixed' = 'absolute';
+    let top: number;
+    let left: number;
+    let width: number;
+    let maxHeight: number;
+
+    if (useViewportReadout) {
+      const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+      const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+      const viewportGutter = 8;
+      const availableWidth = Math.max(viewportWidth - viewportGutter * 2, 0);
+      const availableHeight = Math.max(viewportHeight - viewportGutter * 2, 0);
+      if (availableWidth <= 0 || availableHeight <= 0) return;
+
+      host = document.body ?? document.documentElement;
+      position = 'fixed';
+      width = Math.min(Math.max(patchRect.width, inlineReadoutWidth), availableWidth);
+      maxHeight = Math.min(availableHeight, 320);
+      left = Math.max(
+        viewportGutter,
+        Math.min(patchRect.left, viewportWidth - width - viewportGutter)
+      );
+      top = Math.max(
+        viewportGutter,
+        Math.min(patchRect.top, viewportHeight - maxHeight - viewportGutter)
+      );
+      const imageId = layer.getAttribute('data-koma-image-id');
+      if (imageId) panel.setAttribute('data-koma-portal-image-id', imageId);
+    } else {
+      width = Math.min(Math.max(patchRect.width, inlineReadoutWidth), layerRect.width - 8);
+      left = Math.min(
+        Math.max(patchRect.left - layerRect.left, inlineGutter),
+        layerRect.width - width - inlineGutter
+      );
+      if (placeAbovePatch) {
+        maxHeight = Math.min(320, inlineHeightAbove);
+        top = Math.max(inlineGutter, patchTop - inlineGutter - maxHeight);
+      } else {
+        top = Math.max(patchTop, inlineGutter);
+        maxHeight = Math.min(320, layerRect.height - top - inlineGutter);
+      }
+    }
+
     applyImportantStyles(panel, {
-      position: 'absolute',
+      position,
       top: `${top}px`,
       left: `${left}px`,
       width: `${width}px`,
-      'max-height': `${layerRect.height - top - 4}px`,
+      'max-height': `${maxHeight}px`,
       'overflow-x': 'hidden',
       'overflow-y': 'auto',
       'box-sizing': 'border-box',
@@ -635,7 +763,7 @@ export class DOMOverlayRenderer {
       margin: '0',
       'box-shadow': '0 2px 8px rgba(0, 0, 0, 0.35)',
       'pointer-events': 'auto',
-      'z-index': '40',
+      'z-index': useViewportReadout ? '2147483647' : '40',
     });
     panel.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return;
@@ -644,7 +772,7 @@ export class DOMOverlayRenderer {
       this.closeReadout(rendered);
     });
 
-    layer.appendChild(panel);
+    host.appendChild(panel);
     rendered.readoutElement = panel;
     panel.focus();
   }
@@ -652,12 +780,12 @@ export class DOMOverlayRenderer {
   /**
    * Removes the readout panel and returns focus to its patch.
    */
-  private closeReadout(rendered: RenderedBubbleOverlay): void {
-    if (!rendered.readoutElement?.isConnected) return;
+  private closeReadout(rendered: RenderedBubbleOverlay, restoreFocus = true): void {
+    if (!rendered.readoutElement) return;
     const patch = rendered.element;
     rendered.readoutElement.remove();
     rendered.readoutElement = undefined;
-    if (patch.isConnected) patch.focus();
+    if (restoreFocus && patch.isConnected) patch.focus();
   }
 
   /**
@@ -724,10 +852,25 @@ export class DOMOverlayRenderer {
    */
   private cleanupOverlayResult(result: RenderOverlayResult): void {
     this.disconnectResizeObserver(result.imageId);
+    this.cleanupInteractiveControls(result);
     if (result.overlayLayer.parentNode) {
       result.overlayLayer.parentNode.removeChild(result.overlayLayer);
     }
     this.unwrapElement(result.wrapperElement);
+  }
+
+  private cleanupInteractiveControls(result: RenderOverlayResult): void {
+    for (const bubble of result.bubbles) {
+      this.closeReadout(bubble, false);
+      bubble.clipIndicator?.remove();
+      bubble.clipIndicator = undefined;
+    }
+  }
+
+  private removePortalControlsForImage(imageId: string): void {
+    document.querySelectorAll<HTMLElement>('[data-koma-portal-image-id]').forEach((control) => {
+      if (control.getAttribute('data-koma-portal-image-id') === imageId) control.remove();
+    });
   }
 
   /**
@@ -765,6 +908,7 @@ export class DOMOverlayRenderer {
           minFontSize: options.minFontSize,
           maxFontSize: options.maxFontSize,
         });
+        this.syncClipIndicator(bubble, result.overlayLayer);
       }
     });
 
