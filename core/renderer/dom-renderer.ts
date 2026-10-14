@@ -50,6 +50,7 @@ export class DOMOverlayRenderer {
     backgroundColor: 'rgba(255, 255, 255, 0.96)',
     textColor: '#111111',
     showSourceOnHover: true,
+    enableInspection: true,
     layerClassName: '',
   };
 
@@ -94,6 +95,9 @@ export class DOMOverlayRenderer {
 
     // 2. Obtain or clear existing overlay layer for idempotency
     const overlayLayer = this.ensureOverlayLayer(wrapper, result.imageId, mergedOptions);
+    // The bubble boxes are normalized to the image, so the layer has to match the image box even
+    // when the wrapper is wider than the artwork (block images inside a wider reader column).
+    this.syncLayerBounds(imageElement, wrapper, overlayLayer);
 
     // 3. Render each bubble patch
     const renderedBubbles: RenderedBubbleOverlay[] = [];
@@ -232,6 +236,7 @@ export class DOMOverlayRenderer {
       while (layer.firstChild) {
         layer.removeChild(layer.firstChild);
       }
+      this.ensureLayerStyles(layer, options);
       return layer;
     }
 
@@ -259,8 +264,27 @@ export class DOMOverlayRenderer {
       'z-index': '2147483640',
     });
 
+    if (options.enableInspection) {
+      this.ensureLayerStyles(layer, options);
+    }
+
     wrapper.appendChild(layer);
     return layer;
+  }
+
+  /**
+   * Keeps the layer's inspection focus rules present across re-renders.
+   */
+  private ensureLayerStyles(layer: HTMLElement, options: Required<RenderOverlayOptions>): void {
+    if (!options.enableInspection) return;
+    if (layer.querySelector(':scope > [data-koma-inspection-styles]')) return;
+    const style = document.createElement('style');
+    style.setAttribute('data-koma-inspection-styles', 'true');
+    // A focused patch must stay visible, including while it hides its paint for inspection.
+    style.textContent =
+      '[data-koma-bubble]:focus-visible, [data-koma-clip-indicator]:focus-visible, [data-koma-bubble-readout]:focus-visible' +
+      ' { outline: 2px solid #5b5ee9 !important; outline-offset: 1px !important; }';
+    layer.appendChild(style);
   }
 
   /**
@@ -284,12 +308,16 @@ export class DOMOverlayRenderer {
       bubbleElement.setAttribute('data-koma-source-text', bubble.sourceText);
       if (options.showSourceOnHover) {
         bubbleElement.title = `Original: ${bubble.sourceText}`;
-        bubbleElement.tabIndex = 0;
         bubbleElement.setAttribute(
           'aria-label',
           `${bubble.translatedText}. Original: ${bubble.sourceText}`
         );
       }
+    }
+
+    if (options.enableInspection) {
+      bubbleElement.tabIndex = 0;
+      bubbleElement.setAttribute('data-koma-bubble-inspectable', 'true');
     }
 
     const borderRadius = bubbleType === 'narration' ? '2px' : '6px';
@@ -349,13 +377,332 @@ export class DOMOverlayRenderer {
       maxFontSize: options.maxFontSize,
     });
 
-    return {
+    const rendered: RenderedBubbleOverlay = {
       bubbleId: bubble.id,
       element: bubbleElement,
       textElement,
       fontSize,
       bubble,
     };
+
+    if (options.enableInspection) {
+      this.attachInspection(rendered);
+      if (
+        fontSize <= options.minFontSize &&
+        this.textOverflowsContainer(textElement, bubbleElement)
+      ) {
+        rendered.clipIndicator = this.createClipIndicator(rendered, percentages);
+        // The chip lives on the layer, not inside the patch: the patch clips its own overflow, and a
+        // clipped control cannot be clicked.
+        overlayLayer.appendChild(rendered.clipIndicator);
+      }
+    }
+
+    return rendered;
+  }
+
+  /**
+   * Detects text that still overflows after downscaling reached the font floor.
+   */
+  private textOverflowsContainer(textElement: HTMLElement, container: HTMLElement): boolean {
+    return (
+      textElement.scrollHeight > container.clientHeight ||
+      textElement.scrollWidth > container.clientWidth
+    );
+  }
+
+  /**
+   * Hover and keyboard inspection: the patch hides its own paint so the untouched artwork
+   * shows through. The patch keeps receiving pointer events and keeps its focus outline.
+   */
+  private attachInspection(rendered: RenderedBubbleOverlay): void {
+    const patch = rendered.element;
+    // Hover and the keyboard toggle are tracked apart, so a stray pointer move cannot cancel a
+    // deliberate keyboard reveal and a pointer that stays put keeps its reveal.
+    patch.addEventListener('pointerenter', () => this.setHoverInspection(rendered, true));
+    patch.addEventListener('pointerleave', () => this.setHoverInspection(rendered, false));
+    patch.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.clearInspection(rendered);
+        this.closeReadout(rendered);
+        return;
+      }
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      rendered.toggledInspection = !rendered.toggledInspection;
+      this.syncInspection(rendered);
+    });
+  }
+
+  private setHoverInspection(rendered: RenderedBubbleOverlay, hover: boolean): void {
+    if (rendered.hoverInspection === hover) return;
+    rendered.hoverInspection = hover;
+    this.syncInspection(rendered);
+  }
+
+  private clearInspection(rendered: RenderedBubbleOverlay): void {
+    if (!rendered.hoverInspection && !rendered.toggledInspection) return;
+    rendered.hoverInspection = false;
+    rendered.toggledInspection = false;
+    this.syncInspection(rendered);
+  }
+
+  private syncInspection(rendered: RenderedBubbleOverlay): void {
+    this.setInspected(rendered, Boolean(rendered.hoverInspection || rendered.toggledInspection));
+  }
+
+  private readonly inspectionStates = new WeakMap<
+    RenderedBubbleOverlay,
+    { element: HTMLElement; property: string; value: string; priority: string }[]
+  >();
+
+  private inspectedProperties(
+    rendered: RenderedBubbleOverlay
+  ): { element: HTMLElement; property: string }[] {
+    // The fallback chip stays visible on purpose: it is Koma's control, not the artwork, and it
+    // must remain operable while the patch reveals the original image underneath.
+    return [
+      { element: rendered.element, property: 'background-color' },
+      { element: rendered.element, property: 'border-color' },
+      { element: rendered.element, property: 'box-shadow' },
+      { element: rendered.textElement, property: 'color' },
+    ];
+  }
+
+  private setInspected(rendered: RenderedBubbleOverlay, inspected: boolean): void {
+    if (rendered.inspected === inspected) return;
+    rendered.inspected = inspected;
+    const entries = this.inspectedProperties(rendered);
+
+    if (inspected) {
+      // Keep the exact paint values so leaving inspection restores the rendered patch.
+      this.inspectionStates.set(
+        rendered,
+        entries.map((entry) => ({
+          ...entry,
+          value: entry.element.style.getPropertyValue(entry.property),
+          priority: entry.element.style.getPropertyPriority(entry.property),
+        }))
+      );
+      for (const entry of entries) {
+        const paint = entry.property === 'box-shadow' ? 'none' : 'transparent';
+        entry.element.style.setProperty(entry.property, paint, 'important');
+      }
+      return;
+    }
+
+    const state = this.inspectionStates.get(rendered) ?? [];
+    this.inspectionStates.delete(rendered);
+    for (const entry of state) {
+      if (entry.value) {
+        entry.element.style.setProperty(entry.property, entry.value, entry.priority || 'important');
+      } else {
+        entry.element.style.removeProperty(entry.property);
+      }
+    }
+  }
+
+  /**
+   * Fallback affordance for text that cannot fit its patch at the font floor.
+   */
+  private createClipIndicator(
+    rendered: RenderedBubbleOverlay,
+    percentages: { top: string; left: string; width: string; height: string }
+  ): HTMLElement {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'koma-bubble-clip-indicator';
+    chip.setAttribute('data-koma-clip-indicator', rendered.bubble.id);
+    chip.setAttribute(
+      'aria-label',
+      `Show the complete translation${rendered.bubble.sourceText ? ' and the original text' : ''}`
+    );
+    chip.textContent = 'Show all';
+    const edge = (start: string, size: string) => `${parseFloat(start) + parseFloat(size)}%`;
+    applyImportantStyles(chip, {
+      position: 'absolute',
+      // Pinned to the patch's bottom-right corner, inside the artwork so it never leaves the layer.
+      top: edge(percentages.top, percentages.height),
+      left: edge(percentages.left, percentages.width),
+      transform: 'translate(calc(-100% - 2px), calc(-100% - 2px))',
+      'min-height': '24px',
+      'min-width': '44px',
+      'font-family':
+        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+      'font-size': '11px',
+      'font-weight': '600',
+      'line-height': '1',
+      color: '#111111',
+      background: 'rgba(255, 255, 255, 0.98)',
+      // 0.46 over the white chip is 3.4:1 (WCAG non-text 3:1) and stays 5.9:1 over dark artwork.
+      border: '1px solid rgba(0, 0, 0, 0.46)',
+      'border-radius': '12px',
+      padding: '3px 8px',
+      'box-shadow': '0 1px 2px rgba(0, 0, 0, 0.3)',
+      cursor: 'pointer',
+      'z-index': '20',
+      'pointer-events': 'auto',
+    });
+    const open = (event: Event) => {
+      event.stopPropagation();
+      this.openReadout(rendered);
+    };
+    chip.addEventListener('click', open);
+    chip.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        this.openReadout(rendered);
+      }
+    });
+    return chip;
+  }
+
+  /**
+   * Opens the clipped-text readout near its patch, clamped inside the overlay layer.
+   */
+  private openReadout(rendered: RenderedBubbleOverlay): void {
+    if (rendered.readoutElement?.isConnected) return;
+    this.closeOtherReadouts();
+
+    const layer = rendered.element.closest<HTMLElement>('[data-koma-overlay-layer="true"]');
+    if (!layer) return;
+    const layerRect = layer.getBoundingClientRect();
+    if (layerRect.width <= 0 || layerRect.height <= 0) return;
+
+    const patchRect = rendered.element.getBoundingClientRect();
+    const panel = document.createElement('div');
+    panel.className = 'koma-bubble-readout';
+    panel.setAttribute('data-koma-bubble-readout', rendered.bubble.id);
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute(
+      'aria-label',
+      `Full translation${rendered.bubble.sourceText ? ' with original text' : ''}`
+    );
+    panel.tabIndex = -1;
+
+    const translated = document.createElement('p');
+    translated.textContent = rendered.bubble.translatedText;
+    applyImportantStyles(translated, {
+      margin: '0',
+      'font-family':
+        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+      'font-size': '14px',
+      'line-height': '1.35',
+      'font-weight': '600',
+      color: '#111111',
+      'overflow-wrap': 'break-word',
+      'white-space': 'pre-wrap',
+    });
+    panel.append(translated);
+
+    if (rendered.bubble.sourceText) {
+      const source = document.createElement('p');
+      source.textContent = `Original: ${rendered.bubble.sourceText}`;
+      applyImportantStyles(source, {
+        margin: '6px 0 0',
+        'font-family': translated.style.fontFamily,
+        'font-size': '12px',
+        'line-height': '1.3',
+        'font-weight': '500',
+        color: 'rgba(17, 17, 17, 0.72)',
+        'overflow-wrap': 'break-word',
+        'white-space': 'pre-wrap',
+      });
+      panel.append(source);
+    }
+
+    const width = Math.min(Math.max(patchRect.width, 220), layerRect.width - 8);
+    const left = Math.min(
+      Math.max(patchRect.left - layerRect.left, 4),
+      layerRect.width - width - 4
+    );
+    const top = Math.min(patchRect.top - layerRect.top, layerRect.height - 8);
+    applyImportantStyles(panel, {
+      position: 'absolute',
+      top: `${top}px`,
+      left: `${left}px`,
+      width: `${width}px`,
+      'max-height': `${layerRect.height - top - 4}px`,
+      'overflow-x': 'hidden',
+      'overflow-y': 'auto',
+      'box-sizing': 'border-box',
+      background: 'rgba(255, 255, 255, 0.99)',
+      // Matches the chip boundary: 3.4:1 against the panel fill, so the panel edge is perceivable.
+      border: '1px solid rgba(0, 0, 0, 0.46)',
+      'border-radius': '8px',
+      padding: '10px',
+      margin: '0',
+      'box-shadow': '0 2px 8px rgba(0, 0, 0, 0.35)',
+      'pointer-events': 'auto',
+      'z-index': '40',
+    });
+    panel.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      this.clearInspection(rendered);
+      this.closeReadout(rendered);
+    });
+
+    layer.appendChild(panel);
+    rendered.readoutElement = panel;
+    panel.focus();
+  }
+
+  /**
+   * Removes the readout panel and returns focus to its patch.
+   */
+  private closeReadout(rendered: RenderedBubbleOverlay): void {
+    if (!rendered.readoutElement?.isConnected) return;
+    const patch = rendered.element;
+    rendered.readoutElement.remove();
+    rendered.readoutElement = undefined;
+    if (patch.isConnected) patch.focus();
+  }
+
+  /**
+   * Only one clipped-text readout is open at a time across all rendered images.
+   */
+  private closeOtherReadouts(): void {
+    for (const result of this.renderedOverlays.values()) {
+      for (const bubble of result.bubbles) {
+        if (bubble.readoutElement?.isConnected) this.closeReadout(bubble);
+      }
+    }
+  }
+
+  /**
+   * Measures the renderer's own placement drift: each patch rect versus the rectangle
+   * implied by its normalized box over the rendered image size. Model bounding-box error
+   * needs artwork ground truth and is therefore not covered by this measurement.
+   */
+  public measureLayoutDrift(
+    imageId: string
+  ): { bubbles: { bubbleId: string; driftPercent: number }[]; maxDriftPercent: number } | null {
+    const rendered = this.renderedOverlays.get(imageId);
+    if (!rendered?.wrapperElement.isConnected) return null;
+    const image = rendered.wrapperElement.querySelector<HTMLImageElement>(':scope > img');
+    const imageRect = image?.getBoundingClientRect();
+    if (!imageRect || imageRect.width <= 0 || imageRect.height <= 0) return null;
+
+    let maxDriftPercent = 0;
+    const bubbles = rendered.bubbles.map((renderedBubble) => {
+      const intended = boxToPercentages(renderedBubble.bubble.box);
+      // Normalized boxes are image-relative, so the image box is the only honest reference.
+      const intendedLeft = imageRect.left + (imageRect.width * parseFloat(intended.left)) / 100;
+      const intendedTop = imageRect.top + (imageRect.height * parseFloat(intended.top)) / 100;
+      const actual = renderedBubble.element.getBoundingClientRect();
+      const offsetX = actual.left - intendedLeft;
+      const offsetY = actual.top - intendedTop;
+      const driftPercent =
+        Math.max(
+          Math.abs(offsetX) / Math.max(imageRect.width, 1),
+          Math.abs(offsetY) / Math.max(imageRect.height, 1)
+        ) * 100;
+      maxDriftPercent = Math.max(maxDriftPercent, driftPercent);
+      return { bubbleId: renderedBubble.bubbleId, driftPercent };
+    });
+    return { bubbles, maxDriftPercent };
   }
 
   /**
@@ -412,6 +759,7 @@ export class DOMOverlayRenderer {
     }
 
     const observer = new ResizeObserver(() => {
+      this.syncLayerBounds(image, result.wrapperElement, result.overlayLayer);
       for (const bubble of result.bubbles) {
         bubble.fontSize = fitTextToBubble(bubble.textElement, bubble.element, {
           minFontSize: options.minFontSize,
@@ -422,6 +770,27 @@ export class DOMOverlayRenderer {
 
     observer.observe(image);
     this.resizeObservers.set(result.imageId, observer);
+  }
+
+  /**
+   * Pins the overlay layer to the image's rendered box inside the wrapper, in pixels, so the
+   * normalized bubble percentages resolve against the artwork instead of the surrounding layout.
+   * Falls back to filling the wrapper while the image has no measurable box.
+   */
+  private syncLayerBounds(image: HTMLImageElement, wrapper: HTMLElement, layer: HTMLElement): void {
+    const imageRect = image.getBoundingClientRect();
+    const wrapperRect = wrapper.getBoundingClientRect();
+    if (imageRect.width <= 0 || imageRect.height <= 0) {
+      applyImportantStyles(layer, { top: '0', left: '0', width: '100%', height: '100%' });
+      return;
+    }
+
+    applyImportantStyles(layer, {
+      top: `${imageRect.top - wrapperRect.top}px`,
+      left: `${imageRect.left - wrapperRect.left}px`,
+      width: `${imageRect.width}px`,
+      height: `${imageRect.height}px`,
+    });
   }
 
   private disconnectResizeObserver(imageId: string): void {
