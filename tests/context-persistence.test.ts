@@ -158,6 +158,79 @@ describe('Persistent reading context', () => {
     expect(second.getGlossary()).toEqual([]);
   });
 
+  it('merges concurrent glossary changes from different chapters in one series', async () => {
+    const { area } = createMemoryStorage();
+    const chapterTwo = {
+      ...chapterOne,
+      reading: { ...chapterOne.reading, chapterId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+    };
+    const tabA = new PersistentContextManager({
+      store: new ContextStore({ storageArea: area }),
+    });
+    const tabB = new PersistentContextManager({
+      store: new ContextStore({ storageArea: area }),
+    });
+
+    await Promise.all([tabA.setScope(chapterOne), tabB.setScope(chapterTwo)]);
+    tabA.addGlossaryEntry({ original: 'ルフィ', translation: 'Luffy', isHard: true });
+    await tabA.flush();
+    await tabB.commitTranslation(
+      {
+        bubbles: [{ translatedText: 'The swordsman arrives.' }],
+        contextDelta: { glossaryUpdates: [{ original: 'ゾロ', translation: 'Zoro' }] },
+      },
+      0,
+      'chapter-two-image-0'
+    );
+
+    const fresh = new PersistentContextManager({
+      store: new ContextStore({ storageArea: area }),
+    });
+    await fresh.setScope(chapterOne);
+    expect(fresh.getGlossary()).toEqual([
+      { original: 'ルフィ', translation: 'Luffy', isHard: true },
+      { original: 'ゾロ', translation: 'Zoro', isHard: false },
+    ]);
+  });
+
+  it.each(['save', 'setPinned', 'remove'] as const)(
+    'rejects a stale %s that targets a term changed by another tab',
+    async (operation) => {
+      const { area } = createMemoryStorage();
+      const originalEntry = { original: '覇気', translation: 'Ambition', isHard: false };
+      const winner = { ...originalEntry, translation: 'Haki', isHard: true };
+      const seed = new PersistentContextManager({ store: new ContextStore({ storageArea: area }) });
+      await seed.setScope(chapterOne);
+      seed.addGlossaryEntry(originalEntry);
+      await seed.flush();
+
+      const tabA = new PersistentContextManager({
+        store: new ContextStore({ storageArea: area }),
+      });
+      const tabB = new PersistentContextManager({
+        store: new ContextStore({ storageArea: area }),
+      });
+      await Promise.all([tabA.setScope(chapterOne), tabB.setScope(chapterOne)]);
+      tabA.addGlossaryEntry(winner);
+      await tabA.flush();
+
+      if (operation === 'remove') {
+        tabB.removeGlossaryEntry(originalEntry.original);
+      } else if (operation === 'setPinned') {
+        tabB.addGlossaryEntry({ ...originalEntry, isHard: true });
+      } else {
+        tabB.addGlossaryEntry({ ...originalEntry, translation: 'Will of D.', isHard: true });
+      }
+      await expect(tabB.flush()).rejects.toMatchObject({ code: 'CONTEXT_CONFLICT' });
+
+      const fresh = new PersistentContextManager({
+        store: new ContextStore({ storageArea: area }),
+      });
+      await fresh.setScope(chapterOne);
+      expect(fresh.getGlossary()).toEqual([winner]);
+    }
+  );
+
   it('retains scoped context when the active translation provider changes', async () => {
     const { area } = createMemoryStorage();
     const manager = new PersistentContextManager({
@@ -431,7 +504,12 @@ describe('Persistent reading context', () => {
     const { area, data } = createMemoryStorage();
     data['koma_context:v1:corrupt'] = { schemaVersion: 99, dialogueContributions: 'bad' };
     const store = new ContextStore({ storageArea: area });
-    expect(await store.load('corrupt')).toBeNull();
+    expect(await store.load('corrupt')).toMatchObject({
+      schemaVersion: 1,
+      scopeGeneration: 1,
+      dialogueContributions: [],
+      glossary: [],
+    });
     expect(data['koma_context:v1:corrupt']).toBeUndefined();
 
     const unavailable: ContextStorageArea = {
