@@ -86,6 +86,7 @@ async function setup() {
   });
   const { getRuntimeProviderConfig, handleTranslationPort } =
     await import('../extension/background/translation');
+  const { handleContextStorageMessage } = await import('../extension/background/context');
   const { handleCacheMessage } = await import('../extension/background/cache');
   const { saveProviderSettings } = await import('../extension/settings/storage');
   await saveProviderSettings(
@@ -110,6 +111,17 @@ async function setup() {
       );
     } else if (message.type === EXTENSION_MESSAGE_TYPES.GET_PROVIDER_CONFIG) {
       void getRuntimeProviderConfig().then((config) => done({ success: true, config }));
+    } else if (message.type === EXTENSION_MESSAGE_TYPES.CONTEXT_STORAGE_COMMAND) {
+      handleContextStorageMessage(
+        message,
+        {
+          id: runtime.id,
+          frameId: 0,
+          url: window.location.href,
+          tab: { id: 3, url: window.location.href } as chrome.tabs.Tab,
+        } as chrome.runtime.MessageSender,
+        (response) => done?.(response)
+      );
     } else {
       for (const listener of listeners)
         listener(message, { tab: { id: 3 } as chrome.tabs.Tab }, () => {});

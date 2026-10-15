@@ -36,6 +36,7 @@ import {
 import { TranslationOrchestrator, type ITranslationOrchestrator } from '@core/orchestrator';
 import { DOMOverlayRenderer } from '@core/renderer';
 import { ExtensionTranslationProvider } from './provider';
+import { ExtensionContextStore } from './context-store';
 import { resolveTargetImage } from './target-image';
 import { ReaderStatusView } from './reader-status';
 import { cacheCommand, ExtensionReplayCache } from './cache';
@@ -45,7 +46,9 @@ if (typeof window !== 'undefined') {
 }
 
 // Session context owner for active tab / content script session
-export const sessionContextManager: IContextManager = new PersistentContextManager();
+export const sessionContextManager: IContextManager = new PersistentContextManager({
+  store: new ExtensionContextStore(),
+});
 export const overlayRenderer: DOMOverlayRenderer = new DOMOverlayRenderer();
 export const translationCache = {
   size: async () => (await cacheCommand<{ count: number }>('size')).count,
