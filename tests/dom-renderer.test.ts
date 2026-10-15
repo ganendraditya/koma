@@ -428,6 +428,10 @@ describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
     );
   }
 
+  function waitForPortalSync(): Promise<void> {
+    return new Promise((resolve) => window.setTimeout(resolve, 25));
+  }
+
   beforeEach(() => {
     renderer = new DOMOverlayRenderer();
     container = document.createElement('div');
@@ -439,12 +443,14 @@ describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
 
   afterEach(() => {
     renderer.removeAllOverlays();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     container.remove();
   });
 
   it('reveals the untouched artwork on hover and restores it on leave', () => {
+    vi.useFakeTimers();
     mockLayout({ overflow: false });
     const patch = renderer.render(pageResult([bubble('bubble_001')]), image).bubbles[0];
     const paintedBackground = patch.element.style.getPropertyValue('background-color');
@@ -452,16 +458,39 @@ describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
 
     expect(paintedBackground).not.toBe('transparent');
     patch.element.dispatchEvent(new Event('pointerenter'));
+    expect(patch.inspected).toBeFalsy();
+    expect(patch.element.style.getPropertyValue('background-color')).toBe(paintedBackground);
+    vi.advanceTimersByTime(299);
+    expect(patch.inspected).toBeFalsy();
+    vi.advanceTimersByTime(1);
+    expect(patch.inspected).toBe(true);
     expect(patch.element.style.getPropertyValue('background-color')).toBe('transparent');
     expect(patch.element.style.getPropertyValue('border-color')).toBe('transparent');
     expect(patch.textElement.style.getPropertyValue('color')).toBe('transparent');
     expect(patch.element.tabIndex).toBe(0);
 
     patch.element.dispatchEvent(new Event('pointerleave'));
+    expect(patch.inspected).toBe(false);
     expect(patch.element.style.getPropertyValue('background-color')).toBe(paintedBackground);
     expect(patch.element.style.getPropertyPriority('background-color')).toBe('important');
     expect(patch.textElement.style.getPropertyValue('color')).toBe(paintedText);
     expect(patch.inspected).toBe(false);
+  });
+
+  it('cancels a pending hover reveal when the pointer leaves before the delay', () => {
+    vi.useFakeTimers();
+    mockLayout({ overflow: false });
+    const patch = renderer.render(pageResult([bubble('bubble_001')]), image).bubbles[0];
+
+    patch.element.dispatchEvent(new Event('pointerenter'));
+    vi.advanceTimersByTime(299);
+    patch.element.dispatchEvent(new Event('pointerleave'));
+    vi.advanceTimersByTime(1);
+
+    expect(patch.inspected).toBe(false);
+    expect(patch.element.style.getPropertyValue('background-color')).toBe(
+      'rgba(255, 255, 255, 0.96)'
+    );
   });
 
   it('toggles inspection from the keyboard and restores it with Escape', () => {
@@ -500,6 +529,29 @@ describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
     press('Escape');
     expect(patch.inspected).toBe(false);
     expect(patch.toggledInspection).toBe(false);
+  });
+
+  it('toggles artwork inspection on touch taps without changing mouse clicks', () => {
+    mockLayout({ overflow: false });
+    const patch = renderer.render(pageResult([bubble('bubble_001')]), image).bubbles[0];
+    const pointerUp = (pointerType: string) => {
+      const event = new Event('pointerup', { bubbles: true });
+      Object.defineProperty(event, 'pointerType', { value: pointerType });
+      patch.element.dispatchEvent(event);
+    };
+
+    pointerUp('mouse');
+    expect(patch.inspected).toBeFalsy();
+
+    pointerUp('touch');
+    expect(patch.inspected).toBe(true);
+    expect(patch.element.style.getPropertyValue('background-color')).toBe('transparent');
+
+    pointerUp('touch');
+    expect(patch.inspected).toBe(false);
+    expect(patch.element.style.getPropertyValue('background-color')).toBe(
+      'rgba(255, 255, 255, 0.96)'
+    );
   });
 
   it('adds a fallback affordance only when fitted text still overflows the patch', () => {
@@ -578,11 +630,75 @@ describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
     expect(outcome.overlayLayer.querySelector('[data-koma-bubble-readout]')).toBeNull();
   });
 
-  it('uses a viewport-clamped readout when the image layer is too small to contain one', () => {
+  it('closes the readout with its button, outside pointer, focus leaving, or a second chip click', async () => {
+    mockLayout({ overflow: true, width: 320, height: 90 });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      left: 10,
+      top: 20,
+      right: 330,
+      bottom: 110,
+      width: 320,
+      height: 90,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const patch = renderer.render(pageResult([bubble('bubble_001')]), image).bubbles[0];
+    const chip = patch.clipIndicator!;
+
+    chip.click();
+    const firstPanel = patch.readoutElement!;
+    const closeButton = firstPanel.querySelector<HTMLButtonElement>('[data-koma-readout-close]')!;
+    expect(closeButton.textContent).toBe('Close');
+    expect(closeButton.getAttribute('aria-label')).toBe('Close full translation');
+    expect(closeButton.style.minHeight).toBe('44px');
+    expect(closeButton.style.minWidth).toBe('44px');
+    closeButton.click();
+    expect(firstPanel.isConnected).toBe(false);
+    expect(document.activeElement).toBe(chip);
+
+    const outsidePointerTarget = document.createElement('button');
+    const outsidePointerAction = vi.fn();
+    outsidePointerTarget.addEventListener('click', outsidePointerAction);
+    document.body.append(outsidePointerTarget);
+    chip.click();
+    const secondPanel = patch.readoutElement!;
+    outsidePointerTarget.click();
+    expect(secondPanel.isConnected).toBe(false);
+    expect(patch.readoutElement).toBeUndefined();
+    expect(outsidePointerAction).toHaveBeenCalledOnce();
+
+    chip.click();
+    const thirdPanel = patch.readoutElement!;
+    outsidePointerTarget.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    outsidePointerTarget.click();
+    expect(thirdPanel.isConnected).toBe(false);
+    expect(patch.readoutElement).toBeUndefined();
+    expect(outsidePointerAction).toHaveBeenCalledTimes(2);
+    outsidePointerTarget.remove();
+
+    chip.click();
+    const fourthPanel = patch.readoutElement!;
+    const externalButton = document.createElement('button');
+    document.body.append(externalButton);
+    externalButton.focus();
+    await new Promise<void>((resolve) => window.queueMicrotask(resolve));
+    expect(fourthPanel.isConnected).toBe(false);
+
+    chip.click();
+    const fifthPanel = patch.readoutElement!;
+    chip.click();
+    expect(fifthPanel.isConnected).toBe(false);
+    expect(patch.readoutElement).toBeUndefined();
+    externalButton.remove();
+  });
+
+  it('uses a viewport-clamped readout when the image layer is too small to contain one', async () => {
     mockLayout({ overflow: true, width: 4, height: 4 });
     vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024);
     vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768);
     let imageSize = { width: 4, height: 4 };
+    let imageTop = 800;
     let resizeCallback: ResizeObserverCallback | undefined;
     vi.stubGlobal(
       'ResizeObserver',
@@ -600,11 +716,11 @@ describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
     ) {
       const box =
         this.hasAttribute('data-koma-image-id') && this.tagName === 'IMG'
-          ? { left: 20, top: 30, ...imageSize }
+          ? { left: 20, top: imageTop, ...imageSize }
           : this.hasAttribute('data-koma-overlay-layer')
-            ? { left: 20, top: 30, ...imageSize }
+            ? { left: 20, top: imageTop, ...imageSize }
             : this.hasAttribute('data-koma-bubble')
-              ? { left: 20, top: 30, width: 1, height: 1 }
+              ? { left: 20, top: imageTop, width: 1, height: 1 }
               : { left: 0, top: 0, width: 885, height: 600 };
       return {
         ...box,
@@ -627,14 +743,21 @@ describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
     expect(chip.isConnected).toBe(true);
     expect(chip.parentElement).toBe(document.body);
     expect(chip.style.position).toBe('fixed');
+    expect(chip.style.visibility).toBe('hidden');
     expect(Number.parseFloat(chip.style.width)).toBeGreaterThanOrEqual(72);
     expect(Number.parseFloat(chip.style.height)).toBeGreaterThanOrEqual(44);
+
+    imageTop = 30;
+    window.dispatchEvent(new Event('scroll'));
+    document.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await waitForPortalSync();
+    expect(chip.style.visibility).toBe('visible');
     expect(chip.style.left).toBe('20px');
     expect(chip.style.top).toBe('30px');
     expect(outcome.wrapperElement.matches('[data-koma-wrapper="true"]')).toBe(true);
     expect(outcome.overlayLayer.getBoundingClientRect().width).toBe(4);
     chip.focus();
-    chip.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    chip.click();
 
     const panel = outcome.bubbles[0].readoutElement!;
     expect(panel.parentElement).toBe(document.body);
@@ -644,6 +767,27 @@ describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
     expect(panel.style.left).toBe('20px');
     expect(panel.style.top).toBe('30px');
     expect(panel.textContent).toContain('must remain readable in the fallback panel.');
+
+    imageTop = 230;
+    window.dispatchEvent(new Event('scroll'));
+    document.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await waitForPortalSync();
+    expect(outcome.bubbles[0].clipIndicator!.style.top).toBe('230px');
+    expect(panel.style.top).toBe('230px');
+
+    imageTop = 800;
+    window.dispatchEvent(new Event('scroll'));
+    document.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await waitForPortalSync();
+    expect(outcome.bubbles[0].clipIndicator!.style.visibility).toBe('hidden');
+    expect(panel.isConnected).toBe(false);
+
+    imageTop = 30;
+    window.dispatchEvent(new Event('scroll'));
+    document.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await waitForPortalSync();
+    expect(outcome.bubbles[0].clipIndicator!.style.visibility).toBe('visible');
+    expect(outcome.bubbles[0].clipIndicator!.style.top).toBe('30px');
 
     const rerendered = renderer.render(longResult, image);
     expect(
@@ -731,7 +875,9 @@ describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
     } as DOMRect);
     const patch = renderer.render(pageResult([bubble('bubble_001')]), image).bubbles[0];
 
+    vi.useFakeTimers();
     patch.element.dispatchEvent(new Event('pointerenter'));
+    vi.advanceTimersByTime(300);
     expect(patch.inspected).toBe(true);
     expect(patch.clipIndicator!.style.getPropertyValue('visibility')).toBe('');
 
@@ -746,6 +892,7 @@ describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
     const first = container.querySelectorAll('[data-koma-inspection-styles]');
     expect(first).toHaveLength(1);
     expect(first[0].textContent).toContain('[data-koma-bubble]:focus-visible');
+    expect(first[0].textContent).toContain('[data-koma-readout-close]:focus-visible');
 
     renderer.render(pageResult([bubble('bubble_001'), bubble('bubble_002')]), image);
     const second = container.querySelectorAll('[data-koma-inspection-styles]');

@@ -56,7 +56,10 @@ export class DOMOverlayRenderer {
 
   private readonly renderedOverlays = new Map<string, RenderOverlayResult>();
   private readonly resizeObservers = new Map<string, ResizeObserver>();
+  private readonly portalScrollCleanups = new Map<string, () => void>();
   private readonly originalImageStates = new WeakMap<HTMLImageElement, OriginalImageState>();
+  private readonly hoverInspectionTimers = new WeakMap<RenderedBubbleOverlay, number>();
+  private readonly readoutDismissCleanups = new WeakMap<RenderedBubbleOverlay, () => void>();
 
   constructor(private readonly globalOptions?: RenderOverlayOptions) {}
 
@@ -120,6 +123,7 @@ export class DOMOverlayRenderer {
 
     this.renderedOverlays.set(result.imageId, renderResult);
     this.observeImageResize(imageElement, renderResult, mergedOptions);
+    this.observePortalScroll(renderResult);
     return renderResult;
   }
 
@@ -288,7 +292,7 @@ export class DOMOverlayRenderer {
     style.setAttribute('data-koma-inspection-styles', 'true');
     // A focused patch must stay visible, including while it hides its paint for inspection.
     style.textContent =
-      '[data-koma-bubble]:focus-visible, [data-koma-clip-indicator]:focus-visible, [data-koma-bubble-readout]:focus-visible' +
+      '[data-koma-bubble]:focus-visible, [data-koma-clip-indicator]:focus-visible, [data-koma-bubble-readout]:focus-visible, [data-koma-readout-close]:focus-visible' +
       ' { outline: 2px solid #5b5ee9 !important; outline-offset: 1px !important; }';
     layer.appendChild(style);
   }
@@ -416,15 +420,20 @@ export class DOMOverlayRenderer {
   }
 
   /**
-   * Hover and keyboard inspection: the patch hides its own paint so the untouched artwork
-   * shows through. The patch keeps receiving pointer events and keeps its focus outline.
+   * Pointer, touch, and keyboard inspection: the patch hides its own paint so the untouched
+   * artwork shows through. The patch keeps receiving pointer events and keeps its focus outline.
    */
   private attachInspection(rendered: RenderedBubbleOverlay): void {
     const patch = rendered.element;
     // Hover and the keyboard toggle are tracked apart, so a stray pointer move cannot cancel a
     // deliberate keyboard reveal and a pointer that stays put keeps its reveal.
-    patch.addEventListener('pointerenter', () => this.setHoverInspection(rendered, true));
-    patch.addEventListener('pointerleave', () => this.setHoverInspection(rendered, false));
+    patch.addEventListener('pointerenter', () => this.scheduleHoverInspection(rendered, true));
+    patch.addEventListener('pointerleave', () => this.scheduleHoverInspection(rendered, false));
+    patch.addEventListener('pointerup', (event) => {
+      if (event.pointerType !== 'touch') return;
+      rendered.toggledInspection = !rendered.toggledInspection;
+      this.syncInspection(rendered);
+    });
     patch.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -445,7 +454,31 @@ export class DOMOverlayRenderer {
     this.syncInspection(rendered);
   }
 
+  private scheduleHoverInspection(rendered: RenderedBubbleOverlay, hover: boolean): void {
+    this.cancelHoverInspection(rendered);
+    if (!hover) {
+      this.setHoverInspection(rendered, false);
+      return;
+    }
+
+    const view = rendered.element.ownerDocument.defaultView;
+    if (!view) return;
+    const timer = view.setTimeout(() => {
+      this.hoverInspectionTimers.delete(rendered);
+      this.setHoverInspection(rendered, true);
+    }, 300);
+    this.hoverInspectionTimers.set(rendered, timer);
+  }
+
+  private cancelHoverInspection(rendered: RenderedBubbleOverlay): void {
+    const timer = this.hoverInspectionTimers.get(rendered);
+    if (timer === undefined) return;
+    rendered.element.ownerDocument.defaultView?.clearTimeout(timer);
+    this.hoverInspectionTimers.delete(rendered);
+  }
+
   private clearInspection(rendered: RenderedBubbleOverlay): void {
+    this.cancelHoverInspection(rendered);
     if (!rendered.hoverInspection && !rendered.toggledInspection) return;
     rendered.hoverInspection = false;
     rendered.toggledInspection = false;
@@ -551,15 +584,13 @@ export class DOMOverlayRenderer {
 
     const open = (event: Event) => {
       event.stopPropagation();
+      if (rendered.readoutElement?.isConnected) {
+        this.closeReadout(rendered, false);
+        return;
+      }
       this.openReadout(rendered);
     };
     chip.addEventListener('click', open);
-    chip.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        this.openReadout(rendered);
-      }
-    });
     return chip;
   }
 
@@ -577,13 +608,20 @@ export class DOMOverlayRenderer {
     }
     // The layer clips descendants, so move the chip out when it cannot contain the full control.
     if (layerWidth < 72 || layerHeight < 44) {
-      const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
-      const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+      const ownerDocument = overlayLayer.ownerDocument;
+      const view = ownerDocument.defaultView;
+      const viewportWidth = ownerDocument.documentElement.clientWidth || view?.innerWidth || 0;
+      const viewportHeight = ownerDocument.documentElement.clientHeight || view?.innerHeight || 0;
       const availableWidth = Math.max(viewportWidth - 16, 0);
       const availableHeight = Math.max(viewportHeight - 16, 0);
       if (availableWidth <= 0 || availableHeight <= 0) return;
 
       const patchRect = rendered.element.getBoundingClientRect();
+      const isInViewport =
+        patchRect.right > 0 &&
+        patchRect.bottom > 0 &&
+        patchRect.left < viewportWidth &&
+        patchRect.top < viewportHeight;
       const width = Math.min(72, availableWidth);
       const height = Math.min(44, availableHeight);
       const left = Math.max(8, Math.min(patchRect.left, viewportWidth - width - 8));
@@ -604,8 +642,10 @@ export class DOMOverlayRenderer {
         'align-items': 'center',
         'justify-content': 'center',
         'white-space': 'nowrap',
+        visibility: isInViewport ? 'visible' : 'hidden',
         'z-index': '2147483647',
       });
+      if (!isInViewport && ownerDocument.activeElement === chip) chip.blur();
       const portalRoot = document.body ?? document.documentElement;
       if (chip.parentElement !== portalRoot) portalRoot.appendChild(chip);
       return;
@@ -620,6 +660,7 @@ export class DOMOverlayRenderer {
       'align-items',
       'justify-content',
       'white-space',
+      'visibility',
     ]) {
       chip.style.removeProperty(property);
     }
@@ -670,6 +711,39 @@ export class DOMOverlayRenderer {
       `Full translation${rendered.bubble.sourceText ? ' with original text' : ''}`
     );
     panel.tabIndex = -1;
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.setAttribute('data-koma-readout-close', 'true');
+    closeButton.setAttribute('aria-label', 'Close full translation');
+    closeButton.textContent = 'Close';
+    applyImportantStyles(closeButton, {
+      display: 'block',
+      width: '64px',
+      'max-width': '100%',
+      height: '44px',
+      'min-width': '44px',
+      'min-height': '44px',
+      'box-sizing': 'border-box',
+      margin: '0 0 8px auto',
+      padding: '4px 8px',
+      'font-family':
+        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+      'font-size': '12px',
+      'font-weight': '600',
+      color: '#111111',
+      background: 'rgba(255, 255, 255, 0.99)',
+      border: '1px solid rgba(0, 0, 0, 0.46)',
+      'border-radius': '4px',
+      cursor: 'pointer',
+      'pointer-events': 'auto',
+    });
+    closeButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.closeReadout(rendered, false);
+      if (rendered.clipIndicator?.isConnected) rendered.clipIndicator.focus();
+    });
+    panel.append(closeButton);
 
     const translated = document.createElement('p');
     translated.textContent = rendered.bubble.translatedText;
@@ -774,6 +848,37 @@ export class DOMOverlayRenderer {
 
     host.appendChild(panel);
     rendered.readoutElement = panel;
+
+    const chip = rendered.clipIndicator;
+    const isWithinReadoutOrChip = (target: EventTarget | null): boolean => {
+      if (!target || typeof target !== 'object' || !('nodeType' in target)) return false;
+      const node = target as Node;
+      return panel.contains(node) || Boolean(chip?.contains(node));
+    };
+    const onOutsidePointerDown = (event: PointerEvent) => {
+      if (isWithinReadoutOrChip(event.target)) return;
+      this.closeReadout(rendered, false);
+    };
+    const onOutsideClick = (event: MouseEvent) => {
+      if (isWithinReadoutOrChip(event.target)) return;
+      this.closeReadout(rendered, false);
+    };
+    const onFocusOut = (event: FocusEvent) => {
+      if (isWithinReadoutOrChip(event.relatedTarget)) return;
+      panel.ownerDocument.defaultView?.queueMicrotask(() => {
+        if (!panel.isConnected || isWithinReadoutOrChip(panel.ownerDocument.activeElement)) return;
+        this.closeReadout(rendered, false);
+      });
+    };
+    panel.ownerDocument.addEventListener('pointerdown', onOutsidePointerDown, true);
+    panel.ownerDocument.addEventListener('click', onOutsideClick, true);
+    panel.addEventListener('focusout', onFocusOut);
+    this.readoutDismissCleanups.set(rendered, () => {
+      panel.ownerDocument.removeEventListener('pointerdown', onOutsidePointerDown, true);
+      panel.ownerDocument.removeEventListener('click', onOutsideClick, true);
+      panel.removeEventListener('focusout', onFocusOut);
+    });
+
     panel.focus();
   }
 
@@ -783,6 +888,8 @@ export class DOMOverlayRenderer {
   private closeReadout(rendered: RenderedBubbleOverlay, restoreFocus = true): void {
     if (!rendered.readoutElement) return;
     const patch = rendered.element;
+    this.readoutDismissCleanups.get(rendered)?.();
+    this.readoutDismissCleanups.delete(rendered);
     rendered.readoutElement.remove();
     rendered.readoutElement = undefined;
     if (restoreFocus && patch.isConnected) patch.focus();
@@ -861,6 +968,7 @@ export class DOMOverlayRenderer {
 
   private cleanupInteractiveControls(result: RenderOverlayResult): void {
     for (const bubble of result.bubbles) {
+      this.cancelHoverInspection(bubble);
       this.closeReadout(bubble, false);
       bubble.clipIndicator?.remove();
       bubble.clipIndicator = undefined;
@@ -909,11 +1017,116 @@ export class DOMOverlayRenderer {
           maxFontSize: options.maxFontSize,
         });
         this.syncClipIndicator(bubble, result.overlayLayer);
+        if (bubble.readoutElement?.hasAttribute('data-koma-portal-image-id')) {
+          this.syncViewportReadout(bubble);
+        }
       }
     });
 
     observer.observe(image);
     this.resizeObservers.set(result.imageId, observer);
+  }
+
+  private observePortalScroll(result: RenderOverlayResult): void {
+    if (!result.bubbles.some((bubble) => bubble.clipIndicator)) return;
+    const view = result.wrapperElement.ownerDocument.defaultView;
+    if (!view) return;
+
+    let syncTimer: number | undefined;
+    const synchronize = () => {
+      if (syncTimer !== undefined) return;
+      syncTimer = view.setTimeout(() => {
+        syncTimer = undefined;
+        if (this.renderedOverlays.get(result.imageId) !== result) return;
+
+        for (const bubble of result.bubbles) {
+          const chipIsPortaled = bubble.clipIndicator?.hasAttribute('data-koma-portal-image-id');
+          const panelIsPortaled = bubble.readoutElement?.hasAttribute('data-koma-portal-image-id');
+          if (!chipIsPortaled && !panelIsPortaled) continue;
+
+          const patchRect = bubble.element.getBoundingClientRect();
+          const isInViewport =
+            patchRect.right > 0 &&
+            patchRect.bottom > 0 &&
+            patchRect.left < view.innerWidth &&
+            patchRect.top < view.innerHeight;
+          if (!isInViewport) {
+            if (chipIsPortaled) {
+              bubble.clipIndicator!.style.setProperty('visibility', 'hidden', 'important');
+              if (result.wrapperElement.ownerDocument.activeElement === bubble.clipIndicator) {
+                bubble.clipIndicator!.blur();
+              }
+            }
+            if (panelIsPortaled) this.closeReadout(bubble, false);
+            continue;
+          }
+
+          if (chipIsPortaled) this.syncClipIndicator(bubble, result.overlayLayer);
+          if (panelIsPortaled) this.syncViewportReadout(bubble);
+        }
+      }, 16);
+    };
+    const cleanup = () => {
+      view.removeEventListener('scroll', synchronize);
+      view.removeEventListener('resize', synchronize);
+      result.wrapperElement.ownerDocument.removeEventListener('scroll', synchronize, true);
+      if (syncTimer !== undefined) view.clearTimeout(syncTimer);
+      this.portalScrollCleanups.delete(result.imageId);
+    };
+
+    view.addEventListener('scroll', synchronize, { passive: true });
+    view.addEventListener('resize', synchronize, { passive: true });
+    result.wrapperElement.ownerDocument.addEventListener('scroll', synchronize, {
+      capture: true,
+      passive: true,
+    });
+    this.portalScrollCleanups.set(result.imageId, cleanup);
+  }
+
+  private syncViewportReadout(rendered: RenderedBubbleOverlay): void {
+    const panel = rendered.readoutElement;
+    const view = rendered.element.ownerDocument.defaultView;
+    if (!panel || !view || !panel.hasAttribute('data-koma-portal-image-id')) return;
+
+    const patchRect = rendered.element.getBoundingClientRect();
+    if (
+      patchRect.right <= 0 ||
+      patchRect.bottom <= 0 ||
+      patchRect.left >= view.innerWidth ||
+      patchRect.top >= view.innerHeight
+    ) {
+      this.closeReadout(rendered, false);
+      return;
+    }
+
+    const viewportWidth =
+      rendered.element.ownerDocument.documentElement.clientWidth || view.innerWidth;
+    const viewportHeight =
+      rendered.element.ownerDocument.documentElement.clientHeight || view.innerHeight;
+    const viewportGutter = 8;
+    const availableWidth = Math.max(viewportWidth - viewportGutter * 2, 0);
+    const availableHeight = Math.max(viewportHeight - viewportGutter * 2, 0);
+    if (availableWidth <= 0 || availableHeight <= 0) {
+      this.closeReadout(rendered, false);
+      return;
+    }
+
+    const width = Math.min(Math.max(patchRect.width, 220), availableWidth);
+    const maxHeight = Math.min(availableHeight, 320);
+    const left = Math.max(
+      viewportGutter,
+      Math.min(patchRect.left, viewportWidth - width - viewportGutter)
+    );
+    const top = Math.max(
+      viewportGutter,
+      Math.min(patchRect.top, viewportHeight - maxHeight - viewportGutter)
+    );
+    applyImportantStyles(panel, {
+      top: `${top}px`,
+      left: `${left}px`,
+      width: `${width}px`,
+      'max-height': `${maxHeight}px`,
+    });
   }
 
   /**
@@ -940,6 +1153,7 @@ export class DOMOverlayRenderer {
   private disconnectResizeObserver(imageId: string): void {
     this.resizeObservers.get(imageId)?.disconnect();
     this.resizeObservers.delete(imageId);
+    this.portalScrollCleanups.get(imageId)?.();
   }
 
   private computedStyleFor(image: HTMLImageElement): CSSStyleDeclaration | undefined {

@@ -14,13 +14,16 @@ Out of scope: inpainting, sound-effect typography, and OCR.
 
 | Situation                                                              | Result                                                                                                                                                      |
 | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pointer enters a patch                                                 | The patch hides its own paint (fill, border, shadow, text) so the artwork underneath shows. Pointer and focus stay on the patch.                            |
+| Pointer stays over a patch for 300ms                                   | The patch hides its own paint (fill, border, shadow, text) so the artwork underneath shows. Pointer and focus stay on the patch.                            |
 | Pointer leaves                                                         | The patch restores the exact paint values it had before inspection.                                                                                         |
 | `Enter` or `Space` on a focused patch                                  | Toggles the reveal. A keyboard reveal survives pointer movement, so a stray mouse move cannot cancel it.                                                    |
+| Tap on a touch pointer                                                 | Toggles the reveal; a second tap restores the translated patch. Mouse clicks do not toggle inspection.                                                      |
 | `Escape` on a patch, or on an open readout                             | Restores the patch, closes the readout, and returns focus to the patch.                                                                                     |
 | Fitted text still overflows at the font floor                          | The patch gains a `Show all` chip pinned to its bottom-right corner.                                                                                        |
 | Chip activated by pointer or keyboard                                  | Opens one readout with the complete translation and `Original: <source text>` when the provider returned source text. A second readout replaces the first.  |
+| Readout dismissed                                                      | The `Close` button, outside click/pointer, focus leaving the panel, or activating its chip again closes it. The close button returns focus to the chip.     |
 | Image cannot contain a 72×44px chip or a 220×72px readout with gutters | The control/readout moves to a viewport-clamped portal so the image layer cannot clip it.                                                                   |
+| A portaled control's image scrolls                                     | The chip and readout follow the patch. The chip hides and the readout closes while the patch is outside the viewport.                                       |
 | Overlays hidden, re-shown, or removed                                  | No orphan chip, readout, or focus rule remains; images return to their pre-Koma margins, and the reader adapter's own `data-koma-image-id` markers survive. |
 
 The chip is not a descendant of the patch. The patch clips its own overflow (`overflow: hidden`), so a chip inside it would be clipped and unclickable. On normal images, the chip is a layer-level sibling at the patch's bottom-right corner. When the layer is too small to contain a touch target, the chip becomes a viewport-fixed portal near the patch. The readout also uses a viewport-fixed portal when the image layer cannot contain its minimum readable size; otherwise it stays inside the image layer.
@@ -53,7 +56,7 @@ The chip and panel borders were raised from `rgba(0,0,0,0.35)` (2.43:1, failing 
 
 ## Automated verification
 
-- `tests/dom-renderer.test.ts`: 30 tests in the file, 12 of them added for KOMA-017 (hover reveal and exact restore, keyboard toggle and Escape, reveal surviving pointer movement, chip only when the text overflows, chip placement on the layer, readout content with and without source text, single readout, Escape from inside the panel, one focus rule set per layer, cleanup, tiny-image and shallow-edge viewport controls/readout including resize and re-render cleanup, layer pinned to the image box with a fill-the-wrapper fallback, drift measurement).
+- `tests/dom-renderer.test.ts`: 33 tests in the file, 15 of them added for KOMA-017 (hover delay and exact restore, pending-hover cancellation, keyboard and touch toggles, Escape, reveal surviving pointer movement, chip only when the text overflows, chip placement on the layer, readout content with and without source text, close paths and focus restoration, single readout, Escape from inside the panel, one focus rule set per layer, cleanup, tiny-image and shallow-edge viewport controls/readout including scroll and resize, layer pinned to the image box with a fill-the-wrapper fallback, drift measurement).
 - On the original KOMA-017 commit (`42fe068`): 258 tests pass. `typecheck`, `lint`, `format:check`, `build`, and `git diff --check` all exit 0.
 - Sandboxed reruns of those five modes on `42fe068`: all exit 0.
 
@@ -104,3 +107,17 @@ The smoke run that produced the table above first failed the coverage check, whi
 The review found that a readout inside a layer smaller than 8px could not be opened readably. The fix uses a body-level, viewport-fixed control when the rendered layer is narrower than 72px or shorter than 44px, and moves the complete-text readout to the same portal when there is not enough room for a 220×72px panel with 4px gutters above or below its patch. `ResizeObserver` moves the chip back into the image layer when the artwork grows; rerender and overlay cleanup remove portal controls.
 
 Verification on Headless Chrome for Testing 155.0.8059.39: the synthetic reader image was resized from 400×600px to 4×4px. The chip measured 72×44px, stayed within the viewport, and showed a 2px focus ring. Pressing Enter opened a focused, fixed 220px-wide readout containing the full translation and source text; Escape closed it. Resizing the image back moved the chip into the layer. Cleanup left zero portal nodes and zero console errors. `tests/dom-renderer.test.ts` covers the 4×4px case, keyboard activation, a shallow image near a patch, rerender cleanup, and resize back to the layer. Final repository checks passed: 260 tests, typecheck, lint, format, build, and diff check.
+
+## PR #43 review fixes
+
+The reviewer requested pointer/touch dismissal, portal scroll tracking, and a short hover delay. Before changing the renderer, a temporary Vitest baseline ran against `56fdbc7` and recorded:
+
+| Case                     | Before                                                                                                             |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Readout dismissal        | No close button. It remained connected after outside pointer, focusout, and a second chip click; Escape closed it. |
+| Tiny-image portal scroll | Patch top moved from 300px to 100px, while chip and panel stayed at 300px, a 200px mismatch.                       |
+| Hover reveal             | Inspection was already active immediately on `pointerenter`.                                                       |
+
+After the fix, permanent renderer tests check each dismissal route, ensure an outside click still reaches its target, verify chip and panel follow a 200px patch movement, hide/reveal the portal as the patch leaves/returns to the viewport, verify the 300ms delay and cancellation, and verify touch tap toggles while mouse clicks do not. All 33 renderer tests and all 263 repository tests pass.
+
+An OpenChamber browser-panel run loaded the Vite harness with a 4×4px image and a long translation. The `Show all` chip opened the full readout and exposed a 64×44px `Close` button. Clicking `Close` removed the panel; clicking outside also removed it while the outside action ran once. For scroll geometry, the harness moved the page by 25px and dispatched the scroll notification because the browser-panel scroll helper changes viewport position without emitting page scroll events: patch top, chip top, and open panel top all changed from 180px to 155px. No browser console errors were reported.
