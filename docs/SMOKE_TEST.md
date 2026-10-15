@@ -4,6 +4,8 @@ For the session controls and bounded viewport scheduler introduced by KOMA-012/K
 
 For progress and recovery on the reader with the popup closed, see [KOMA-020 reader-status verification](READER_STATUS_VERIFICATION.md).
 
+For the artwork inspection reveal and the clipped-text readout introduced by KOMA-017, including the overlay placement fix found while verifying it, see [KOMA-017 artwork inspection verification](ARTWORK_INSPECTION_VERIFICATION.md).
+
 Build with `npm run dev` for pipeline timings, then load `dist/` through Chrome's **Load unpacked** and reload the reader tab. Open the content-script console and enable verbose/debug messages. Entries begin with `[Koma pipeline]`. They contain stage names, outcomes, and milliseconds, never image bytes, provider responses, or credentials. The provider request timer covers the Gemini HTTP request, including failed requests; normalization covers response mapping. `total: translation` measures provider and render work for a successfully translated image. It excludes adapter detection and queue wait time, which vary between new requests and retries. A cache `miss` alongside `total: translation` identifies a cold run. Detection scans and rendering log durations on success; a failed stage logs `failed`. Production builds suppress these entries.
 
 ## Reference pages

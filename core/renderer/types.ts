@@ -40,6 +40,13 @@ export interface RenderOverlayOptions {
   showSourceOnHover?: boolean;
 
   /**
+   * Whether patches support temporarily revealing the original artwork
+   * (hover and keyboard inspection) and a clipped-text fallback panel.
+   * @default true
+   */
+  enableInspection?: boolean;
+
+  /**
    * Additional custom CSS class added to the overlay layer.
    */
   layerClassName?: string;
@@ -73,6 +80,31 @@ export interface RenderedBubbleOverlay {
    * Underlying domain bubble model.
    */
   bubble: Bubble;
+
+  /**
+   * Fallback affordance rendered when fitted text still overflows the patch.
+   */
+  clipIndicator?: HTMLElement;
+
+  /**
+   * Readout panel showing the complete translated text and any source text.
+   */
+  readoutElement?: HTMLElement;
+
+  /**
+   * Whether the patch currently hides its paint to reveal the original artwork.
+   */
+  inspected?: boolean;
+
+  /**
+   * Whether the pointer is currently revealing the artwork.
+   */
+  hoverInspection?: boolean;
+
+  /**
+   * Whether the reader switched inspection on from the keyboard.
+   */
+  toggledInspection?: boolean;
 }
 
 /**
