@@ -26,6 +26,9 @@ export async function initializePopup(root: Document = globalThis.document): Pro
   const diagnosticBtn = document.getElementById('btn-diagnostic') as HTMLButtonElement;
   const pauseBtn = document.getElementById('btn-pause') as HTMLButtonElement;
   const overlaysBtn = document.getElementById('btn-overlays') as HTMLButtonElement;
+  const clearCacheBtn = document.getElementById('btn-clear-cache') as HTMLButtonElement;
+  const retranslateBtn = document.getElementById('btn-retranslate') as HTMLButtonElement;
+  const cacheFeedback = document.getElementById('cache-feedback') as HTMLElement;
   const sessionEl = document.getElementById('session-status') as HTMLElement;
 
   const diagBox = document.getElementById('diagnostic-box') as HTMLElement;
@@ -72,6 +75,7 @@ export async function initializePopup(root: Document = globalThis.document): Pro
   function applySession(state?: ReadingSessionState): void {
     session = state;
     translateBtn.disabled = !supported;
+    if (retranslateBtn) retranslateBtn.disabled = !supported;
     translateBtn.textContent =
       state?.status === 'paused' ? 'Resume' : state?.error ? 'Retry Pages' : 'Translate';
     if (pauseBtn)
@@ -113,6 +117,40 @@ export async function initializePopup(root: Document = globalThis.document): Pro
       }
     );
   }
+
+  retranslateBtn?.addEventListener('click', () => {
+    if (
+      !window.confirm(
+        'Send a new provider request for the visible page? This may incur provider cost. Other visible translations will be kept.'
+      )
+    )
+      return;
+    sessionCommand({
+      type: EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE,
+      retranslateImageId: 'visible',
+    });
+  });
+
+  clearCacheBtn?.addEventListener('click', () => {
+    if (
+      !window.confirm(
+        'Clear all Koma translation cache? Glossary, reading context, provider settings, and visible overlays will be kept. Active work will pause.'
+      )
+    )
+      return;
+    clearCacheBtn.disabled = true;
+    cacheFeedback.textContent = 'Clearing translation cache...';
+    chrome.runtime.sendMessage(
+      { type: EXTENSION_MESSAGE_TYPES.CACHE_COMMAND, operation: 'clear' },
+      (response) => {
+        clearCacheBtn.disabled = false;
+        cacheFeedback.textContent =
+          chrome.runtime.lastError || !response?.success
+            ? 'Could not clear translation cache. Work is paused; try again.'
+            : 'Translation cache cleared. Visible translations are kept. Resume or retranslate explicitly to continue.';
+      }
+    );
+  });
 
   function showFeedback(text: string, type: 'success' | 'error', duration = 2500): void {
     if (!feedbackEl) {
