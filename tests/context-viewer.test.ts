@@ -8,12 +8,14 @@ import type {
   ContextCommandOperation,
   ContextCommandResponse,
   ContextCommandOutcome,
+  ProviderRuntimeConfig,
 } from '../shared/messages';
 import type { IContextManager } from '../core/context';
 
 type Listener = Parameters<typeof chrome.runtime.onMessage.addListener>[0];
 
 const CHAPTER = 'f4d00fe4-ed62-446b-a144-5f3d42ca923c';
+const CHAPTER_2 = 'a4d00fe4-ed62-446b-a144-5f3d42ca923d';
 const SERIES = '0f1c2d3e-4a5b-4c6d-8e9f-0a1b2c3d4e5f';
 
 afterEach(() => {
@@ -78,18 +80,33 @@ async function setup(options: { seriesLink?: boolean } = {}) {
 
   const local: Record<string, unknown> = {};
   const listeners: Listener[] = [];
+  const runtime = {
+    id: 'test-extension',
+    getURL: (path: string) => `chrome-extension://test-extension/${path}`,
+    onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
+    sendMessage: vi.fn(),
+    connect: vi.fn(),
+  };
   vi.stubGlobal('chrome', {
-    runtime: {
-      id: 'test-extension',
-      getURL: (path: string) => `chrome-extension://test-extension/${path}`,
-      onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
-      sendMessage: vi.fn(),
-      connect: vi.fn(),
-    },
+    runtime,
     storage: { local: area(local), session: area({}) },
   });
 
   const content = await import('../extension/content/content-script');
+  const { handleContextStorageMessage } = await import('../extension/background/context');
+  runtime.sendMessage.mockImplementation((message, done) => {
+    if (message.type === EXTENSION_MESSAGE_TYPES.CONTEXT_STORAGE_COMMAND) {
+      handleContextStorageMessage(
+        message,
+        {
+          id: runtime.id,
+          frameId: 0,
+          url: window.location.href,
+        } as chrome.runtime.MessageSender,
+        (response) => done?.(response)
+      );
+    }
+  });
   const command = (request: ContextCommandOperation) =>
     new Promise<ContextCommandResponse>((resolve) => {
       listeners[0](
@@ -100,7 +117,12 @@ async function setup(options: { seriesLink?: boolean } = {}) {
       );
     });
 
-  return { local, command, manager: content.sessionContextManager as IContextManager };
+  return {
+    local,
+    command,
+    content,
+    manager: content.sessionContextManager as IContextManager,
+  };
 }
 
 const save = (original: string, translation: string, pinned: boolean) =>
@@ -163,6 +185,164 @@ describe('context command surface', () => {
     expect(response.view?.dialogueCount).toBe(0);
     expect(response.view?.dialogueLimit).toBe(15);
     expect(response.view?.glossaryLimit).toBe(50);
+  });
+
+  it('loads the new chapter scope before acknowledging a pin saved after navigation', async () => {
+    const { command, local, content } = await setup();
+    const config: ProviderRuntimeConfig = {
+      revision: 1,
+      id: 'openai-compatible',
+      name: 'Fixture provider',
+      modelName: 'fixture-vision',
+      cacheIdentity: 'fixture-cache',
+      targetLanguage: 'en',
+      configured: true,
+      capabilities: { vision: true, ocr: true, translation: true, boundingBoxes: true },
+    };
+    await command(save('ルフィ', 'Luffy', true));
+    content.getOrCreateOrchestrator(config);
+    await content.sessionContextManager.ready?.();
+
+    window.history.pushState({}, '', `/chapter/${CHAPTER_2}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    const response = await command(save('覇気', 'Haki', true));
+
+    expect(response).toMatchObject({ success: true, outcome: 'added' });
+    const series = storedScopes(local).find((entry) => entry.kind === 'series');
+    expect(series?.record.glossary).toEqual([
+      { original: 'ルフィ', translation: 'Luffy', isHard: true },
+      { original: '覇気', translation: 'Haki', isHard: true },
+    ]);
+
+    content.getOrCreateOrchestrator(config);
+    await content.sessionContextManager.ready?.();
+    const view = await command({ operation: 'view' });
+    expect(view.view?.scope?.chapterId).toBe(CHAPTER_2);
+    expect(view.view?.glossary).toEqual(series?.record.glossary);
+  });
+
+  it.each(['save', 'setPinned', 'remove'] as const)(
+    'preserves a new pin when a stale tab sends %s',
+    async (operation) => {
+      const { local, content } = await setup();
+      const { PersistentContextManager } = await import('../core/context');
+      const { ExtensionContextStore } = await import('../extension/content/context-store');
+      const scope = (chapterId: string) => ({
+        reading: { site: 'mangadex', chapterId, seriesId: SERIES },
+        targetLanguage: 'en',
+      });
+      const tabA = new PersistentContextManager({ store: new ExtensionContextStore() });
+      const tabB = new PersistentContextManager({ store: new ExtensionContextStore() });
+      const run = (
+        manager: IContextManager,
+        chapterId: string,
+        command: ContextCommandOperation
+      ) => {
+        window.history.replaceState({}, '', `/chapter/${chapterId}`);
+        return new Promise<ContextCommandResponse>((resolve) => {
+          content.handleContentScriptMessage(
+            { type: EXTENSION_MESSAGE_TYPES.CONTEXT_COMMAND, targetLanguage: 'en', ...command },
+            { id: 'test-extension' } as chrome.runtime.MessageSender,
+            (response) => resolve(response as ContextCommandResponse),
+            manager
+          );
+        });
+      };
+
+      window.history.replaceState({}, '', `/chapter/${CHAPTER}`);
+      await tabA.setScope(scope(CHAPTER));
+      tabA.addGlossaryEntry({ original: '生徒会', translation: 'student council', isHard: false });
+      tabA.addGlossaryEntry({ original: '消去', translation: 'remove me', isHard: true });
+      await tabA.flush();
+      window.history.replaceState({}, '', `/chapter/${CHAPTER_2}`);
+      await tabB.setScope(scope(CHAPTER_2));
+
+      const first = await run(tabA, CHAPTER, save('覇気', 'Haki', true));
+      expect(first.success).toBe(true);
+      const staleOperation: ContextCommandOperation =
+        operation === 'save'
+          ? save('ゾロ', 'Zoro', false)
+          : operation === 'setPinned'
+            ? { operation, original: '生徒会', pinned: true }
+            : { operation, original: '消去' };
+      const stale = await run(tabB, CHAPTER_2, staleOperation);
+      expect(stale.success).toBe(true);
+      const followup = await run(tabB, CHAPTER_2, save('猫又', 'Nekoma', false));
+      expect(followup.success).toBe(true);
+
+      window.history.replaceState({}, '', `/chapter/${CHAPTER_2}`);
+      const fresh = new PersistentContextManager({ store: new ExtensionContextStore() });
+      await fresh.setScope(scope(CHAPTER_2));
+      expect(fresh.getGlossary()).toContainEqual({
+        original: '覇気',
+        translation: 'Haki',
+        isHard: true,
+      });
+      if (operation === 'save') {
+        expect(fresh.getGlossary()).toContainEqual({
+          original: 'ゾロ',
+          translation: 'Zoro',
+          isHard: false,
+        });
+      } else if (operation === 'setPinned') {
+        expect(fresh.getGlossary()).toContainEqual({
+          original: '生徒会',
+          translation: 'student council',
+          isHard: true,
+        });
+      } else {
+        expect(fresh.getGlossary()).not.toContainEqual(
+          expect.objectContaining({ original: '消去' })
+        );
+      }
+      expect(fresh.getGlossary()).toContainEqual({
+        original: '猫又',
+        translation: 'Nekoma',
+        isHard: false,
+      });
+      expect(storedScopes(local).find((entry) => entry.kind === 'series')?.record.glossary).toEqual(
+        fresh.getGlossary()
+      );
+    }
+  );
+
+  it('rejects a stale edit, reloads the winning term and returns the conflict to the editor', async () => {
+    const { content } = await setup();
+    const { PersistentContextManager } = await import('../core/context');
+    const { ExtensionContextStore } = await import('../extension/content/context-store');
+    const scope = {
+      reading: { site: 'mangadex', chapterId: CHAPTER, seriesId: SERIES },
+      targetLanguage: 'en',
+    };
+    const tabA = new PersistentContextManager({ store: new ExtensionContextStore() });
+    const tabB = new PersistentContextManager({ store: new ExtensionContextStore() });
+    await tabA.setScope(scope);
+    tabA.addGlossaryEntry({ original: '覇気', translation: 'Ambition', isHard: false });
+    await tabA.flush();
+    await tabB.setScope(scope);
+    tabA.addGlossaryEntry({ original: '覇気', translation: 'Haki', isHard: true });
+    await tabA.flush();
+
+    const response = await new Promise<ContextCommandResponse>((resolve) => {
+      content.handleContentScriptMessage(
+        {
+          type: EXTENSION_MESSAGE_TYPES.CONTEXT_COMMAND,
+          targetLanguage: 'en',
+          ...save('覇気', 'Rubber', true),
+        },
+        { id: 'test-extension' } as chrome.runtime.MessageSender,
+        (result) => resolve(result as ContextCommandResponse),
+        tabB
+      );
+    });
+
+    expect(response).toMatchObject({
+      success: false,
+      code: 'CONTEXT_CONFLICT',
+      view: { glossary: [{ original: '覇気', translation: 'Haki', isHard: true }] },
+    });
+    expect(response.error).toContain('changed in another tab');
+    expect(tabB.getGlossary()).toEqual([{ original: '覇気', translation: 'Haki', isHard: true }]);
   });
 
   it('adds a pinned term to the series and target-language scope and persists it', async () => {

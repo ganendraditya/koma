@@ -74,6 +74,7 @@ export interface IContextManager {
   getMaxGlossaryEntries(): number;
   reset(): void | Promise<void>;
   resetScope?(scope: ContextScope): Promise<void>;
+  reloadScope?(scope: ContextScope): Promise<void>;
   ready?(): Promise<void>;
   flush?(): Promise<void>;
   setScope?(scope?: ContextScope): Promise<void>;

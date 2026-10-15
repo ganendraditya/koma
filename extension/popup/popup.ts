@@ -91,6 +91,12 @@ export async function initializePopup(root: Document = globalThis.document): Pro
   const contextFeedback = document.getElementById('context-feedback') as HTMLElement;
 
   let activeTabId: number | undefined;
+  let contextFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
+  // Responses from superseded commands must not render over the newest view.
+  let contextCommandToken = 0;
+  // An explicit edit keeps the term key fixed; renaming goes through Remove and Add.
+  let editingKey: string | undefined;
+  let contextWithinChapter = false;
   let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let settings: ProviderSettings | undefined;
   let selectedProvider: ProviderId = 'gemini';
@@ -583,13 +589,6 @@ export async function initializePopup(root: Document = globalThis.document): Pro
     removed: 'Term removed.',
   };
 
-  let contextFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
-  // Responses from superseded commands must not render over the newest view.
-  let contextRequestToken = 0;
-  // An explicit edit keeps the term key fixed; renaming goes through Remove and Add.
-  let editingKey: string | undefined;
-  let contextWithinChapter = false;
-
   function refreshInputState(): void {
     const locked = !contextWithinChapter || editingKey !== undefined;
     contextOriginal.disabled = locked;
@@ -624,7 +623,8 @@ export async function initializePopup(root: Document = globalThis.document): Pro
     onDone: (response: ContextCommandResponse) => void
   ): void {
     if (!activeTabId) return;
-    const token = ++contextRequestToken;
+    const token = ++contextCommandToken;
+    const isView = operation.operation === 'view';
     chrome.tabs.sendMessage(
       activeTabId,
       {
@@ -633,23 +633,18 @@ export async function initializePopup(root: Document = globalThis.document): Pro
         ...operation,
       },
       (response: ContextCommandResponse | undefined) => {
-        // A newer command already rendered; only a failed action still owes the user feedback.
-        if (token !== contextRequestToken) {
-          if (response && !response.success)
-            showContextFeedback(
-              response.error ?? 'Could not update the glossary. Try again.',
-              'error'
-            );
-          return;
-        }
+        const superseded = token !== contextCommandToken;
+        if (isView && superseded) return;
         if (chrome.runtime.lastError || !response) {
           onDone({
             success: false,
             error: 'Could not reach the reader. Reload the chapter and try again.',
           });
+          if (!isView && superseded && contextPanel.classList.contains('open')) loadContext();
           return;
         }
-        onDone(response);
+        onDone(!isView && superseded ? { ...response, view: undefined } : response);
+        if (!isView && superseded && contextPanel.classList.contains('open')) loadContext();
       }
     );
   }
@@ -846,15 +841,34 @@ export async function initializePopup(root: Document = globalThis.document): Pro
   contextForm?.addEventListener('submit', (event) => {
     event.preventDefault();
     saveTermBtn.disabled = true;
-    const term = { original: contextOriginal.value, translation: contextTranslation.value };
-    contextCommand({ operation: 'save', ...term, pinned: contextPin.checked }, (response) => {
-      if (response.success) {
-        contextForm.reset();
-        editingKey = undefined;
-        refreshInputState();
+    const term = {
+      original: contextOriginal.value,
+      translation: contextTranslation.value,
+      pinned: contextPin.checked,
+      editingKey,
+    };
+    contextCommand(
+      {
+        operation: 'save',
+        original: term.original,
+        translation: term.translation,
+        pinned: term.pinned,
+      },
+      (response) => {
+        if (
+          response.success &&
+          contextOriginal.value === term.original &&
+          contextTranslation.value === term.translation &&
+          contextPin.checked === term.pinned &&
+          editingKey === term.editingKey
+        ) {
+          contextForm.reset();
+          editingKey = undefined;
+          refreshInputState();
+        }
+        applyContextResponse(response);
       }
-      applyContextResponse(response);
-    });
+    );
   });
 
   cancelTermBtn?.addEventListener('click', () => {

@@ -414,10 +414,14 @@ export function handleContentScriptMessage(
     }
     const command = req;
     const identity = adapter.getReadingIdentity();
-    // The glossary is scoped by series and target language, so show the language this session is
-    // actually using rather than whatever the popup has selected.
-    const scopeLanguage = (currentTargetLanguage || command.targetLanguage || '').trim();
-    const scopeIsLive = Boolean(currentTargetLanguage);
+    const sessionMatchesReading = Boolean(
+      identity && currentTargetLanguage && currentChapterId === identity.chapterId
+    );
+    const scopeLanguage = (
+      sessionMatchesReading
+        ? currentTargetLanguage
+        : command.targetLanguage || currentTargetLanguage || ''
+    ).trim();
 
     const readView = (): ContextView => ({
       supported: Boolean(identity),
@@ -439,11 +443,8 @@ export function handleContentScriptMessage(
       glossaryLimit: contextManager.getMaxGlossaryEntries(),
     });
 
-    // The popup can open before any translation ran, so the stored scope has to be loaded first or
-    // an otherwise usable glossary would read as empty. A live session already carries its scope;
-    // switching it to another target language would drop that session's dialogue.
     const ensureScope = async () => {
-      if (scopeIsLive || !scopeLanguage || !identity) return;
+      if (!scopeLanguage || !identity) return;
       await contextManager.setScope?.({ reading: identity, targetLanguage: scopeLanguage });
       await contextManager.ready?.();
     };
@@ -466,6 +467,7 @@ export function handleContentScriptMessage(
       return fail('Wait for Reset Context to finish before editing the glossary.');
     if (!identity) return fail('Open a supported MangaDex chapter to edit its glossary.');
     if (!scopeLanguage) return fail('Choose a target language before editing the glossary.');
+    const scope: ContextScope = { reading: identity, targetLanguage: scopeLanguage };
 
     const original = (command.original ?? '').trim();
 
@@ -519,13 +521,43 @@ export function handleContentScriptMessage(
         await contextManager.flush?.();
         sendResponse?.({ ...result, view: readView() } satisfies ContextCommandResponse);
       })
-      .catch(() =>
+      .catch(async (error: unknown) => {
+        const code =
+          error && typeof error === 'object' && 'code' in error
+            ? String((error as { code: unknown }).code)
+            : undefined;
+        if (code === 'CONTEXT_CONFLICT' || code === 'CONTEXT_SCOPE_RESET') {
+          let reloaded = false;
+          try {
+            if (contextManager.reloadScope) {
+              await contextManager.reloadScope(scope);
+              reloaded = true;
+            }
+          } catch {
+            reloaded = false;
+          }
+          const reloadMessage = reloaded
+            ? 'Your draft is still here. Review the refreshed glossary, then save again.'
+            : 'Your draft is still here, but the latest context could not be loaded. Reload the reader before saving again.';
+          const errorMessage =
+            code === 'CONTEXT_CONFLICT'
+              ? `This term changed in another tab. ${reloadMessage}`
+              : `This reading context was reset elsewhere. ${reloadMessage}`;
+          sendResponse?.({
+            success: false,
+            code,
+            error: errorMessage,
+            view: readView(),
+          } satisfies ContextCommandResponse);
+          return;
+        }
         sendResponse?.({
           success: false,
+          code,
           error: 'Could not save the glossary change. Try again.',
           view: readView(),
-        } satisfies ContextCommandResponse)
-      );
+        } satisfies ContextCommandResponse);
+      });
     return true;
   }
 

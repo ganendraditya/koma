@@ -103,6 +103,7 @@ export type ContextCommandRequest = {
 
 export interface ContextCommandResponse {
   success: boolean;
+  code?: string;
   error?: string;
   outcome?: ContextCommandOutcome;
   view?: ContextView;
