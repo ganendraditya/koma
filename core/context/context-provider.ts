@@ -3,8 +3,10 @@ import {
   TranslationProvider,
   TranslationRequest,
   TranslationResult,
+  validateTranslationResult,
 } from '@core/contracts';
 import { IContextManager } from './types';
+import { InvalidProviderResponseError } from '@core/errors';
 
 export class ContextAwareProvider implements TranslationProvider {
   constructor(
@@ -37,8 +39,11 @@ export class ContextAwareProvider implements TranslationProvider {
     signal?: AbortSignal
   ): Promise<TranslationResult> {
     signal?.throwIfAborted();
+    await this.contextManager.ready?.();
+    signal?.throwIfAborted();
     // Supply current context memory unless caller provides an explicit override.
-    const effectiveContext = request.context ?? this.contextManager.getPacket();
+    const effectiveContext =
+      request.context ?? this.contextManager.getPacket(request.image.pageIndex);
     const enrichedRequest: TranslationRequest = {
       ...request,
       context: effectiveContext,
@@ -50,13 +55,30 @@ export class ContextAwareProvider implements TranslationProvider {
       : this.innerProvider.translatePage(enrichedRequest));
 
     signal?.throwIfAborted();
-    this.contextManager.recordTranslation(result, request.image.pageIndex);
+    if (!validateTranslationResult(result).valid) {
+      throw new InvalidProviderResponseError(
+        'The provider returned an invalid translation result.',
+        this.innerProvider.id
+      );
+    }
+    if (this.contextManager.commitTranslation) {
+      await this.contextManager.commitTranslation(
+        result,
+        request.image.pageIndex,
+        request.image.id,
+        signal
+      );
+    } else {
+      this.contextManager.recordTranslation(result, request.image.pageIndex, request.image.id);
+      await this.contextManager.flush?.();
+      signal?.throwIfAborted();
+    }
 
     return result;
   }
 
-  resetContext(): void {
-    this.contextManager.reset();
+  resetContext(): void | Promise<void> {
+    return this.contextManager.reset();
   }
 
   getContextManager(): IContextManager {

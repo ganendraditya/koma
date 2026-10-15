@@ -20,6 +20,7 @@ export const EXTENSION_MESSAGE_TYPES = {
   GET_PROVIDER_CONFIG: 'GET_PROVIDER_CONFIG',
   PROVIDER_SETTINGS_CHANGED: 'PROVIDER_SETTINGS_CHANGED',
   TRANSLATE_IMAGE: 'TRANSLATE_IMAGE',
+  CONTEXT_STORAGE_COMMAND: 'CONTEXT_STORAGE_COMMAND',
 } as const;
 
 export type ExtensionMessageType =
@@ -53,11 +54,13 @@ export interface RunDiagnosticRequest {
 
 export interface ResetContextRequest {
   type: typeof EXTENSION_MESSAGE_TYPES.RESET_CONTEXT;
+  targetLanguage?: string;
 }
 
 export interface ResetContextResponse {
   success: boolean;
   timestamp: number;
+  error?: string;
 }
 
 export interface DiagnosticReport {

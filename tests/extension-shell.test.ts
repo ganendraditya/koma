@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// @vitest-environment-options {"url":"https://mangadex.org/"}
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import manifest from '../extension/manifest.json';
 import {
@@ -182,7 +183,15 @@ describe('KOMA-002: Chrome Manifest V3 Extension Shell', () => {
       expect(report.serviceWorker.error).toContain('Could not establish connection');
     });
 
-    it('processes RESET_CONTEXT request in content script messaging handler and clears session context', () => {
+    it('processes RESET_CONTEXT request in content script messaging handler and clears session context', async () => {
+      const chapterId = 'f4d00fe4-ed62-446b-a144-5f3d42ca923c';
+      window.history.replaceState({}, '', `/chapter/${chapterId}`);
+      if (!sessionContextManager.setScope) throw new Error('Session context cannot be scoped.');
+      await sessionContextManager.setScope({
+        reading: { site: 'mangadex', chapterId },
+        targetLanguage: 'id',
+      });
+
       // Seed session context state
       sessionContextManager.recordTranslation({
         bubbles: [
@@ -210,11 +219,13 @@ describe('KOMA-002: Chrome Manifest V3 Extension Shell', () => {
         sessionContextManager
       );
 
-      expect(keptChannelOpen).toBe(false);
-      expect(sendResponse).toHaveBeenCalledWith({
-        success: true,
-        timestamp: expect.any(Number),
-      });
+      expect(keptChannelOpen).toBe(true);
+      await vi.waitFor(() =>
+        expect(sendResponse).toHaveBeenCalledWith({
+          success: true,
+          timestamp: expect.any(Number),
+        })
+      );
 
       // Context state must be completely cleared
       expect(sessionContextManager.getDialogueCount()).toBe(0);
@@ -222,6 +233,7 @@ describe('KOMA-002: Chrome Manifest V3 Extension Shell', () => {
     });
 
     it('handles TRANSLATE_ACTIVE_PAGE and rejects if page is unsupported', () => {
+      window.history.replaceState({}, '', '/');
       const sendResponse = vi.fn();
       const keptChannelOpen = handleContentScriptMessage(
         { type: EXTENSION_MESSAGE_TYPES.TRANSLATE_ACTIVE_PAGE },
