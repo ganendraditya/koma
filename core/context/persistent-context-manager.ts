@@ -191,6 +191,19 @@ export class PersistentContextManager extends ContextManager {
     return this.loading;
   }
 
+  async reloadScope(scope: ContextScope): Promise<void> {
+    const nextIds = this.getScopeIds(scope);
+    if (!nextIds) throw new Error('Cannot reload context without a valid scope.');
+
+    const signature = `${nextIds.chapter}\n${nextIds.glossary}`;
+    if (this.scopeSignature !== signature) return;
+    await this.writes;
+    await this.commits;
+    if (this.scopeSignature !== signature) return;
+    await this.setScope(undefined);
+    await this.setScope(scope);
+  }
+
   async flush(): Promise<void> {
     await this.loading;
     await this.writes;
@@ -435,7 +448,7 @@ export class PersistentContextManager extends ContextManager {
       expectedGlossaryGeneration: state.glossaryGeneration,
       maxDialogueEntries: this.getMaxDialogueEntries(),
     });
-    state.localGlossary = result.glossary.map((entry) => ({ ...entry }));
+    state.localGlossary = snapshot.glossary.map((entry) => ({ ...entry }));
     state.localDialogue = cloneDialogue(snapshot.dialogueContributions);
     state.glossaryRevision = result.glossaryRevision ?? 0;
     state.replayRevision = result.replayRevision ?? state.replayRevision;

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CACHE_OVERSIZE_WARNING,
   CACHE_PERSISTENCE_WARNING,
+  CONTEXT_CHANGED_WARNING,
   ReadingTranslationProvider,
   ReplayStore,
   REPLAY_PREFIX,
@@ -197,6 +198,24 @@ describe('Accepted reading replay', () => {
       translatePage: async () => ({ ...result(), targetLanguage: 'id' }),
     });
     await expect(wrong.wrapped.translatePage(request())).rejects.toThrow('invalid translation');
+  });
+
+  it('warns and skips publication when the glossary changes mid-translation', async () => {
+    const { area } = storage();
+    const context = new PersistentContextManager({
+      store: new ContextStore({ storageArea: area }),
+    });
+    await context.setScope({ reading, targetLanguage: 'en' });
+    const { wrapped, warn } = runtime(context, new ReplayStore({ storageArea: area }));
+    const translated = await wrapped.translatePage(request(0));
+
+    context.addGlossaryEntry({ original: '名前', translation: 'User name', isHard: true });
+    await context.flush();
+
+    await expect(wrapped.acceptTranslation(translated)).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(CONTEXT_CHANGED_WARNING);
+    expect(context.getDialogueCount()).toBe(0);
+    expect(await new ReplayStore({ storageArea: area }).size()).toBe(0);
   });
 
   it('misses when bytes change even if the filename and URL are unchanged', async () => {

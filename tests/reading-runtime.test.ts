@@ -248,6 +248,42 @@ describe('Popup to reader to worker session commands', () => {
     }
   );
 
+  it('sends a popup-pinned glossary term as mandatory context for the next request', async () => {
+    const { popup, click, ready, fetchFn } = await setup();
+    popup.getElementById('btn-toggle-context')!.click();
+    await vi.waitFor(() => expect(popup.getElementById('context-scope')?.hidden).toBe(false));
+    expect(popup.getElementById('context-status')?.textContent).toContain('No dialogue kept yet');
+
+    const original = popup.getElementById('context-original') as HTMLInputElement;
+    const translation = popup.getElementById('context-translation') as HTMLInputElement;
+    const pin = popup.getElementById('context-pin') as HTMLInputElement;
+    const save = popup.getElementById('btn-save-term') as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    original.value = '覇気';
+    original.dispatchEvent(new Event('input'));
+    translation.value = 'Haki';
+    translation.dispatchEvent(new Event('input'));
+    expect(save.disabled).toBe(false);
+    pin.checked = true;
+    click('Save Term');
+
+    await vi.waitFor(() =>
+      expect(popup.getElementById('context-glossary-list')?.textContent).toContain('Haki')
+    );
+    expect(popup.getElementById('context-feedback')?.textContent).toContain(
+      'Retranslate Visible Page'
+    );
+    const termRow = popup.getElementById('context-glossary-list')!.querySelector('.context-badge');
+    expect(termRow?.textContent).toBe('Pinned');
+
+    click('Translate');
+    await ready(3);
+    const body = String(fetchFn.mock.calls[0][1]!.body);
+    expect(body).toContain('覇気');
+    expect(body).toContain('[MANDATORY]');
+    await vi.waitFor(() => expect(popup.getElementById('context-status')?.hidden).toBe(true));
+  });
+
   it('keeps reader feedback current without popup interaction and routes reader Pause/Resume through transport', async () => {
     const { click, ready, fetchFn, response, content, runtime, getRuntimeProviderConfig } =
       await setup();
