@@ -191,6 +191,10 @@ export class ContextManager implements IContextManager {
     return this.replayRevision;
   }
 
+  protected setReplayRevision(revision: string): void {
+    this.replayRevision = revision;
+  }
+
   getDialogueHistory(beforePageIndex?: number): DialogueEntry[] {
     const pageLimit = normalizePageIndex(beforePageIndex);
     const contributions = [...this.dialogueContributions.values()]
