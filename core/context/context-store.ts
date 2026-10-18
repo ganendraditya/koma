@@ -23,6 +23,7 @@ export interface StoredContextSnapshot {
   scopeGeneration?: number;
   glossaryRevision?: number;
   glossaryHistory?: GlossaryHistoryEntry[];
+  replayRevision?: string;
   lastAccessedAt: number;
   dialogueContributions: DialogueContributionSnapshot[];
   glossary: GlossaryEntry[];
@@ -54,6 +55,7 @@ export interface ContextScopeIds {
 export interface ContextWriteOptions {
   dialogueChanges: DialogueChange[];
   glossaryChanges: GlossaryChange[];
+  replayRevision?: string;
   expectedGlossaryRevision: number;
   expectedChapterGeneration: number;
   expectedGlossaryGeneration: number;
@@ -155,6 +157,7 @@ function isStoredContextSnapshot(value: unknown): value is StoredContextSnapshot
             typeof entry.original === 'string' &&
             Boolean(entry.original)
         ))) &&
+    (snapshot.replayRevision === undefined || typeof snapshot.replayRevision === 'string') &&
     typeof snapshot.lastAccessedAt === 'number' &&
     Number.isFinite(snapshot.lastAccessedAt) &&
     Array.isArray(snapshot.dialogueContributions) &&
@@ -270,8 +273,10 @@ export class ContextStore {
   save(
     scopeId: string,
     sections:
-      | Pick<StoredContextSnapshot, 'dialogueContributions' | 'glossary'>
-      | Partial<Pick<StoredContextSnapshot, 'dialogueContributions' | 'glossary'>>
+      | Pick<StoredContextSnapshot, 'dialogueContributions' | 'glossary' | 'replayRevision'>
+      | Partial<
+          Pick<StoredContextSnapshot, 'dialogueContributions' | 'glossary' | 'replayRevision'>
+        >
   ): Promise<void> {
     return this.saveNow(scopeId, sections);
   }
@@ -279,8 +284,10 @@ export class ContextStore {
   private async saveNow(
     scopeId: string,
     sections:
-      | Pick<StoredContextSnapshot, 'dialogueContributions' | 'glossary'>
-      | Partial<Pick<StoredContextSnapshot, 'dialogueContributions' | 'glossary'>>
+      | Pick<StoredContextSnapshot, 'dialogueContributions' | 'glossary' | 'replayRevision'>
+      | Partial<
+          Pick<StoredContextSnapshot, 'dialogueContributions' | 'glossary' | 'replayRevision'>
+        >
   ): Promise<void> {
     if (!this.storageArea) return;
     const storageKey = this.getStorageKey(scopeId);
@@ -296,6 +303,7 @@ export class ContextStore {
       ),
       glossaryRevision: existing?.glossaryRevision ?? 0,
       glossaryHistory: existing?.glossaryHistory ?? [],
+      replayRevision: sections.replayRevision ?? existing?.replayRevision,
       lastAccessedAt: await this.nextAccessTime(),
       dialogueContributions: sections.dialogueContributions
         ? sections.dialogueContributions.map((contribution) => ({
@@ -364,6 +372,7 @@ export class ContextStore {
     );
     const glossaryHistory = [...history];
     let glossaryRevision = currentRevision;
+    let appliedUserGlossaryChange = false;
     for (const change of options.glossaryChanges) {
       const current = glossary.get(change.original) ?? null;
       const changedSinceRead = glossaryHistory.some(
@@ -398,6 +407,7 @@ export class ContextStore {
       } else {
         glossary.delete(change.original);
       }
+      if (change.source === 'user') appliedUserGlossaryChange = true;
       glossaryRevision++;
       glossaryHistory.push({ revision: glossaryRevision, original: change.original });
     }
@@ -439,15 +449,21 @@ export class ContextStore {
     }
 
     const accessTime = await this.nextAccessTime();
+    const replayRevision =
+      (appliedUserGlossaryChange || !glossaryRecord.replayRevision) && options.replayRevision
+        ? options.replayRevision
+        : glossaryRecord.replayRevision;
     const chapterNext: StoredContextSnapshot = {
       ...chapterRecord,
       schemaVersion: 1,
       scopeGeneration: options.expectedChapterGeneration,
+      replayRevision,
       lastAccessedAt: accessTime,
       dialogueContributions: allDialogue,
       ...(scopeIds.chapter === scopeIds.glossary
         ? {
             glossary: [...glossary.values()],
+            replayRevision,
             glossaryRevision,
             glossaryHistory: glossaryHistory.slice(-MAX_GLOSSARY_HISTORY),
           }
@@ -462,6 +478,7 @@ export class ContextStore {
             scopeGeneration: options.expectedGlossaryGeneration,
             glossaryRevision,
             glossaryHistory: glossaryHistory.slice(-MAX_GLOSSARY_HISTORY),
+            replayRevision,
             lastAccessedAt: accessTime,
             glossary: [...glossary.values()],
           };
@@ -518,6 +535,7 @@ export class ContextStore {
       scopeGeneration: snapshot.scopeGeneration ?? 0,
       glossaryRevision: snapshot.glossaryRevision ?? 0,
       glossaryHistory: (snapshot.glossaryHistory ?? []).map((entry) => ({ ...entry })),
+      replayRevision: snapshot.replayRevision,
       lastAccessedAt: snapshot.lastAccessedAt,
       dialogueContributions: snapshot.dialogueContributions.map((contribution) => ({
         ...contribution,

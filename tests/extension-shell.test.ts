@@ -184,6 +184,9 @@ describe('KOMA-002: Chrome Manifest V3 Extension Shell', () => {
     });
 
     it('processes RESET_CONTEXT request in content script messaging handler and clears session context', async () => {
+      vi.stubGlobal('chrome', {
+        runtime: { sendMessage: vi.fn((_message, done) => done({ success: true })) },
+      });
       const chapterId = 'f4d00fe4-ed62-446b-a144-5f3d42ca923c';
       window.history.replaceState({}, '', `/chapter/${chapterId}`);
       if (!sessionContextManager.setScope) throw new Error('Session context cannot be scoped.');
