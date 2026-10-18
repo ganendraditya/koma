@@ -221,6 +221,8 @@ export class ContextStore {
   private readonly maxGlossaryEntries: number;
   private readonly storagePrefix: string;
   private lastAccessedAt = 0;
+  private readonly scopeAccessTimes = new Map<string, number>();
+  private scopeIndexInitialization?: Promise<void>;
 
   constructor(options: ContextStoreOptions = {}) {
     this.storageArea = options.storageArea ?? getChromeStorageArea();
@@ -261,6 +263,7 @@ export class ContextStore {
       lastAccessedAt: await this.nextAccessTime(),
     });
     await this.writeStorageKey(storageKey, snapshot);
+    this.scopeAccessTimes.set(scopeId, snapshot.lastAccessedAt);
     return snapshot;
   }
 
@@ -306,6 +309,7 @@ export class ContextStore {
     };
 
     await this.writeStorageKey(storageKey, snapshot);
+    this.scopeAccessTimes.set(scopeId, snapshot.lastAccessedAt);
     await this.prune();
   }
 
@@ -466,6 +470,8 @@ export class ContextStore {
       [this.getStorageKey(scopeIds.glossary)]: glossaryNext,
     };
     await this.writeStorageItems(recordsToWrite);
+    this.scopeAccessTimes.set(scopeIds.chapter, accessTime);
+    this.scopeAccessTimes.set(scopeIds.glossary, accessTime);
     await this.prune(new Set(ids));
     return this.cloneSnapshot(glossaryNext);
   }
@@ -489,6 +495,7 @@ export class ContextStore {
     }
     await this.writeStorageItems(epochs);
     await this.removeStorageKeys(keys);
+    for (const scopeId of uniqueIds) this.scopeAccessTimes.delete(scopeId);
   }
 
   private getStorageKey(scopeId: string): string {
@@ -496,15 +503,11 @@ export class ContextStore {
   }
 
   private async nextAccessTime(): Promise<number> {
-    const items = await this.readAllStorage();
-    const latestStoredTime = items
-      ? Object.entries(items)
-          .filter(([key]) => key.startsWith(this.storagePrefix))
-          .reduce((latest, [, value]) => {
-            if (!isStoredContextSnapshot(value)) return latest;
-            return Math.max(latest, value.lastAccessedAt);
-          }, 0)
-      : 0;
+    await this.ensureScopeIndex();
+    const latestStoredTime = [...this.scopeAccessTimes.values()].reduce(
+      (latest, time) => Math.max(latest, time),
+      0
+    );
     this.lastAccessedAt = Math.max(Date.now(), this.lastAccessedAt + 1, latestStoredTime + 1);
     return this.lastAccessedAt;
   }
@@ -525,32 +528,44 @@ export class ContextStore {
   }
 
   private async prune(protectedScopeIds = new Set<string>()): Promise<void> {
-    const items = await this.readAllStorage();
-    if (!items) return;
-
-    const records = Object.entries(items)
-      .filter(([key]) => key.startsWith(this.storagePrefix))
-      .map(([key, value]) => ({ key, value }));
-    const corruptKeys = records.filter(({ value }) => !isStoredContextSnapshot(value));
-    if (corruptKeys.length) {
-      await this.removeNow(corruptKeys.map(({ key }) => key.slice(this.storagePrefix.length)));
-    }
-
-    const validRecords = records
-      .filter(({ value }) => isStoredContextSnapshot(value))
-      .sort((a, b) => {
-        const left = a.value as StoredContextSnapshot;
-        const right = b.value as StoredContextSnapshot;
-        return left.lastAccessedAt - right.lastAccessedAt || a.key.localeCompare(b.key);
-      });
-    const candidates = validRecords.filter(
-      ({ key }) => !protectedScopeIds.has(key.slice(this.storagePrefix.length))
+    await this.ensureScopeIndex();
+    const scopes = [...this.scopeAccessTimes.entries()].sort(
+      ([leftId, leftTime], [rightId, rightTime]) =>
+        leftTime - rightTime || leftId.localeCompare(rightId)
     );
-    const excess = validRecords.length - this.maxScopes;
+    const candidates = scopes.filter(([scopeId]) => !protectedScopeIds.has(scopeId));
+    const excess = scopes.length - this.maxScopes;
     if (excess > 0) {
       const evicted = candidates.slice(0, excess);
-      await this.removeNow(evicted.map(({ key }) => key.slice(this.storagePrefix.length)));
+      await this.removeNow(evicted.map(([scopeId]) => scopeId));
     }
+  }
+
+  private async ensureScopeIndex(): Promise<void> {
+    if (!this.storageArea) return;
+    if (!this.scopeIndexInitialization) {
+      const initialization = (async () => {
+        const items = await this.readAllStorage();
+        if (!items) return;
+
+        const corruptScopeIds: string[] = [];
+        for (const [key, value] of Object.entries(items)) {
+          if (!key.startsWith(this.storagePrefix)) continue;
+          const scopeId = key.slice(this.storagePrefix.length);
+          if (isStoredContextSnapshot(value)) {
+            this.scopeAccessTimes.set(scopeId, value.lastAccessedAt);
+          } else {
+            corruptScopeIds.push(scopeId);
+          }
+        }
+        if (corruptScopeIds.length) await this.removeNow(corruptScopeIds);
+      })();
+      this.scopeIndexInitialization = initialization.catch((error: unknown) => {
+        this.scopeIndexInitialization = undefined;
+        throw error;
+      });
+    }
+    await this.scopeIndexInitialization;
   }
 
   private getEpochKey(scopeId: string): string {
