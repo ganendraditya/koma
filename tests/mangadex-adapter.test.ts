@@ -96,6 +96,31 @@ describe('MangaDex adapter', () => {
     expect(adapter.getReadingIdentity('https://mangadex.org/')).toBeNull();
   });
 
+  it('emits a changed reading identity when the title link appears after the reader starts', async () => {
+    const { adapter } = setup();
+    document.querySelector('.md--reader-wrap a[href^="/title/"]')?.remove();
+    const identities: ReturnType<typeof adapter.getReadingIdentity>[] = [];
+    const stop = adapter.observeReadingIdentity((identity) => identities.push(identity));
+    stops.push(stop);
+
+    expect(identities).toEqual([{ site: 'mangadex', chapterId }]);
+    document
+      .querySelector('.md--reader-wrap')!
+      .insertAdjacentHTML(
+        'afterbegin',
+        '<a href="/title/11111111-1111-4111-8111-111111111111/example-series">Example series</a>'
+      );
+
+    await vi.waitFor(() =>
+      expect(identities.at(-1)).toEqual({
+        site: 'mangadex',
+        chapterId,
+        seriesId: '11111111-1111-4111-8111-111111111111',
+      })
+    );
+    expect(identities).toHaveLength(2);
+  });
+
   it('keeps IDs and page indices stable across lazy loading, duplicate nodes, and blob replacement', () => {
     const { adapter } = setup();
     const before = adapter.detectMangaImages();

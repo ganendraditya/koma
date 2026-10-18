@@ -28,7 +28,8 @@ async function setup() {
   const navigation = new EventTarget();
   vi.stubGlobal('navigation', navigation);
   window.history.replaceState({}, '', `/chapter/${chapter}`);
-  document.body.innerHTML = '<div class="md--reader-pages"></div>';
+  document.body.innerHTML =
+    '<div class="md--reader-wrap"><div class="md--reader-pages"></div></div>';
   let visible = 0;
   const addImage = (pageIndex: number) => {
     const image = document.createElement('img');
@@ -349,6 +350,53 @@ describe('Popup to reader to worker session commands', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
     content.handleContentScriptMessage({ type: EXTENSION_MESSAGE_TYPES.RESET_CONTEXT });
     expect(readerText()).toBe('Translation paused');
+  });
+
+  it('promotes active context when MangaDex exposes the title link after the chapter starts', async () => {
+    const { click, content, local } = await setup();
+    document.querySelector('.md--reader-pages')!.replaceChildren();
+    click('Translate');
+    await vi.waitFor(() => expect(readerText()).toBe('Waiting for manga images'));
+    await content.sessionContextManager.ready?.();
+
+    content.sessionContextManager.addGlossaryEntry({
+      original: 'late-term',
+      translation: 'Late term',
+      isHard: true,
+    });
+    await content.sessionContextManager.flush?.();
+
+    document
+      .querySelector('.md--reader-wrap')!
+      .insertAdjacentHTML(
+        'afterbegin',
+        '<a href="/title/11111111-1111-4111-8111-111111111111/example-series">Example series</a>'
+      );
+
+    const storedScopes = () =>
+      Object.keys(local)
+        .filter((key) => key.startsWith('koma_context:v1:'))
+        .map((key) => JSON.parse(decodeURIComponent(key.slice('koma_context:v1:'.length))));
+    await vi.waitFor(() =>
+      expect(
+        storedScopes().some(
+          (scope) => scope[0] === 'series' && scope[2] === '11111111-1111-4111-8111-111111111111'
+        )
+      ).toBe(true)
+    );
+    await content.sessionContextManager.flush?.();
+
+    expect(content.sessionContextManager.getGlossary()).toContainEqual({
+      original: 'late-term',
+      translation: 'Late term',
+      isHard: true,
+    });
+    expect(storedScopes().some((scope) => scope[0] === 'chapter' && scope[2] === null)).toBe(true);
+    expect(
+      storedScopes().some(
+        (scope) => scope[0] === 'chapter' && scope[2] === '11111111-1111-4111-8111-111111111111'
+      )
+    ).toBe(true);
   });
 
   it('shows a real cooldown, blocks early retry and recovers only on explicit reader retry', async () => {

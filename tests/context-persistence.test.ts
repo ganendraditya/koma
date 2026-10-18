@@ -4,6 +4,7 @@ import {
   ContextStore,
   ContextAwareProvider,
   PersistentContextManager,
+  createContextScopeId,
 } from '@core/context';
 import type {
   ProviderCapabilities,
@@ -156,6 +157,101 @@ describe('Persistent reading context', () => {
       targetLanguage: 'id',
     });
     expect(second.getGlossary()).toEqual([]);
+  });
+
+  it('promotes chapter-only context into a late-discovered series scope and keeps the old record', async () => {
+    const { area } = createMemoryStorage();
+    const store = new ContextStore({ storageArea: area });
+    const chapterOnlyScope = {
+      reading: { site: 'mangadex', chapterId: chapterOne.reading.chapterId },
+      targetLanguage: 'id',
+    };
+    const promotedScope = {
+      reading: { ...chapterOnlyScope.reading, seriesId: chapterOne.reading.seriesId },
+      targetLanguage: 'id',
+    };
+
+    const seriesContext = new PersistentContextManager({ store });
+    await seriesContext.setScope(promotedScope);
+    seriesContext.recordTranslation(result('Series dialogue'), 0, 'series-page');
+    seriesContext.addGlossaryEntry({
+      original: 'shared',
+      translation: 'Series term',
+      isHard: true,
+    });
+    seriesContext.addGlossaryEntry({
+      original: 'series-only',
+      translation: 'Series only',
+      isHard: true,
+    });
+    await seriesContext.flush();
+    const seriesScopeId = createContextScopeId({
+      kind: 'series',
+      site: 'mangadex',
+      seriesId: chapterOne.reading.seriesId,
+      targetLanguage: 'id',
+    });
+    expect((await store.load(seriesScopeId))?.glossary).toHaveLength(2);
+
+    const oldChapterId = createContextScopeId({
+      kind: 'chapter',
+      site: 'mangadex',
+      chapterId: chapterOnlyScope.reading.chapterId,
+      targetLanguage: 'id',
+    });
+    const chapterContext = new PersistentContextManager({ store });
+    await chapterContext.setScope(chapterOnlyScope);
+    chapterContext.recordTranslation(result('Chapter-only dialogue'), 1, 'chapter-only-page');
+    chapterContext.addGlossaryEntry({ original: 'shared', translation: 'Old term', isHard: false });
+    chapterContext.addGlossaryEntry({
+      original: 'chapter-only',
+      translation: 'Old only',
+      isHard: true,
+    });
+    await chapterContext.flush();
+    expect((await store.load(oldChapterId))?.glossary).toHaveLength(2);
+
+    const active = new PersistentContextManager({ store });
+    await active.setScope(chapterOnlyScope);
+    expect(active.getGlossary()).toHaveLength(2);
+    const pendingCommit = active.commitTranslation(
+      result('Uncommitted dialogue'),
+      2,
+      'pending-page'
+    );
+    await Promise.all([pendingCommit, active.setScope(promotedScope)]);
+    expect(active.getGlossary()).toHaveLength(3);
+    await active.flush();
+
+    expect(active.getGlossary()).toEqual([
+      { original: 'shared', translation: 'Series term', isHard: true },
+      { original: 'series-only', translation: 'Series only', isHard: true },
+      { original: 'chapter-only', translation: 'Old only', isHard: true },
+    ]);
+    expect(active.getDialogueHistory().map((entry) => entry.translatedText)).toEqual([
+      'Series dialogue',
+      'Chapter-only dialogue',
+    ]);
+
+    const oldRecord = await store.load(oldChapterId);
+    expect(oldRecord?.glossary).toContainEqual({
+      original: 'shared',
+      translation: 'Old term',
+      isHard: false,
+    });
+    expect(oldRecord?.dialogueContributions.flatMap((entry) => entry.entries)).toContainEqual(
+      expect.objectContaining({ translatedText: 'Chapter-only dialogue' })
+    );
+
+    const fresh = new PersistentContextManager({
+      store: new ContextStore({ storageArea: area }),
+    });
+    await fresh.setScope(promotedScope);
+    expect(fresh.getGlossary()).toEqual(active.getGlossary());
+    expect(fresh.getDialogueHistory().map((entry) => entry.translatedText)).toEqual([
+      'Series dialogue',
+      'Chapter-only dialogue',
+    ]);
   });
 
   it('merges concurrent glossary changes from different chapters in one series', async () => {

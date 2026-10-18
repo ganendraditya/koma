@@ -83,6 +83,45 @@ function dialogueChanges(
   return changes;
 }
 
+function isSeriesScopePromotion(previous?: ContextScope, next?: ContextScope): boolean {
+  const before = previous?.reading;
+  const after = next?.reading;
+  return Boolean(
+    before &&
+    after &&
+    !before.seriesId?.trim() &&
+    after.seriesId?.trim() &&
+    before.site.trim().toLowerCase() === after.site.trim().toLowerCase() &&
+    before.chapterId.trim().toLowerCase() === after.chapterId.trim().toLowerCase() &&
+    previous?.targetLanguage.trim().toLowerCase() === next?.targetLanguage.trim().toLowerCase()
+  );
+}
+
+function mergeDialogueContributions(
+  preferred: DialogueContributionSnapshot[],
+  fallback: DialogueContributionSnapshot[]
+): DialogueContributionSnapshot[] {
+  const merged = new Map(
+    preferred.map((contribution) => [contribution.imageId, cloneDialogue([contribution])[0]])
+  );
+  for (const contribution of fallback) {
+    if (!merged.has(contribution.imageId))
+      merged.set(contribution.imageId, cloneDialogue([contribution])[0]);
+  }
+  return [...merged.values()];
+}
+
+function mergeGlossary(
+  preferred: ContextSnapshot['glossary'],
+  fallback: ContextSnapshot['glossary']
+): ContextSnapshot['glossary'] {
+  const merged = new Map(preferred.map((entry) => [entry.original, { ...entry }]));
+  for (const entry of fallback) {
+    if (!merged.has(entry.original)) merged.set(entry.original, { ...entry });
+  }
+  return [...merged.values()];
+}
+
 function makeScopeWriteState(
   chapterRecord: StoredContextSnapshot | null,
   glossaryRecord: StoredContextSnapshot | null,
@@ -104,6 +143,7 @@ export class PersistentContextManager extends ContextManager {
   private readonly store: ContextStorePort;
   private readonly initialSnapshot: ContextSnapshot;
   private activeScopeIds?: ActiveScopeIds;
+  private activeScope?: ContextScope;
   private scopeSignature = '';
   private generation = 0;
   private loading: Promise<void> = Promise.resolve();
@@ -127,9 +167,20 @@ export class PersistentContextManager extends ContextManager {
     const nextSignature = nextIds ? `${nextIds.chapter}\n${nextIds.glossary}` : '';
     if (nextSignature === this.scopeSignature) return this.ready();
 
+    const previousScope = this.activeScope;
+    const previousScopeIds = this.activeScopeIds;
+    const previousLoading = this.loading;
+    const previousWrites = this.writes;
+    const promoteScope = isSeriesScopePromotion(previousScope, scope) && Boolean(previousScopeIds);
     const generation = ++this.generation;
     this.scopeSignature = nextSignature;
     this.activeScopeIds = nextIds;
+    this.activeScope = scope
+      ? {
+          reading: { ...scope.reading },
+          targetLanguage: scope.targetLanguage.trim(),
+        }
+      : undefined;
     const targetLanguage =
       typeof scope?.targetLanguage === 'string' ? scope.targetLanguage.trim() : '';
     this.targetLanguage = targetLanguage || undefined;
@@ -145,29 +196,74 @@ export class PersistentContextManager extends ContextManager {
     const loading = (async () => {
       try {
         if (resetBarrier) await resetBarrier;
+        if (promoteScope) {
+          await previousLoading;
+          await previousWrites;
+        }
         if (generation !== this.generation) return;
 
         const chapterPromise = this.store.load(nextIds.chapter);
         const glossaryPromise =
           nextIds.glossary === nextIds.chapter ? chapterPromise : this.store.load(nextIds.glossary);
-        const [chapterRecord, glossaryRecord] = await Promise.all([
-          chapterPromise,
-          glossaryPromise,
-        ]);
+        const legacyChapterPromise =
+          promoteScope && previousScopeIds
+            ? this.store.load(previousScopeIds.chapter)
+            : Promise.resolve(null);
+        const legacyGlossaryPromise =
+          !promoteScope ||
+          !previousScopeIds ||
+          previousScopeIds.glossary === previousScopeIds.chapter
+            ? legacyChapterPromise
+            : this.store.load(previousScopeIds.glossary);
+        const [chapterRecord, glossaryRecord, legacyChapterRecord, legacyGlossaryRecord] =
+          await Promise.all([
+            chapterPromise,
+            glossaryPromise,
+            legacyChapterPromise,
+            legacyGlossaryPromise,
+          ]);
         if (generation !== this.generation) return;
 
         const initial = super.exportSnapshot();
-        super.restoreSnapshot({
+        const loadedSnapshot: ContextSnapshot = {
           schemaVersion: 1,
           replayRevision: glossaryRecord?.replayRevision ?? initial.replayRevision,
           dialogueContributions:
             chapterRecord?.dialogueContributions ?? initial.dialogueContributions,
           glossary: glossaryRecord?.glossary ?? initial.glossary,
-        } satisfies ContextSnapshot);
+        };
+        const snapshot = promoteScope
+          ? {
+              ...loadedSnapshot,
+              dialogueContributions: mergeDialogueContributions(
+                loadedSnapshot.dialogueContributions,
+                legacyChapterRecord?.dialogueContributions ?? initial.dialogueContributions
+              ),
+              glossary: mergeGlossary(
+                loadedSnapshot.glossary,
+                legacyGlossaryRecord?.glossary ?? initial.glossary
+              ),
+            }
+          : loadedSnapshot;
+        super.restoreSnapshot(snapshot);
         this.scopeWriteStates.set(
           nextSignature,
           makeScopeWriteState(chapterRecord, glossaryRecord, initial)
         );
+        if (promoteScope) {
+          const mergedSnapshot = super.exportSnapshot();
+          if (
+            JSON.stringify(mergedSnapshot.dialogueContributions) !==
+              JSON.stringify(loadedSnapshot.dialogueContributions) ||
+            JSON.stringify(mergedSnapshot.glossary) !== JSON.stringify(loadedSnapshot.glossary)
+          ) {
+            try {
+              await this.saveSnapshot(nextIds, mergedSnapshot, nextSignature, 'model');
+            } catch {
+              // Keep the merged in-memory context usable; the chapter-only record remains intact.
+            }
+          }
+        }
       } catch {
         // A storage read failure leaves the in-memory context usable and empty for this scope.
         this.scopeWriteStates.set(
@@ -230,9 +326,11 @@ export class PersistentContextManager extends ContextManager {
     imageId?: string,
     signal?: AbortSignal
   ): Promise<void> {
-    const commit = this.commits.then(() =>
-      this.commitTranslationNow(result, pageIndex, imageId, signal)
-    );
+    const generation = this.generation;
+    const commit = this.commits.then(() => {
+      if (generation !== this.generation) return;
+      return this.commitTranslationNow(result, pageIndex, imageId, signal);
+    });
     this.commits = commit.catch(() => undefined);
     return commit;
   }

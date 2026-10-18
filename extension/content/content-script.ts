@@ -63,6 +63,8 @@ let currentRenderer: DOMOverlayRenderer | null = null;
 let currentCache: KomaTranslationCache | undefined;
 let currentChapterId: string | null = null;
 let currentTargetLanguage = '';
+let currentScopeOwner: IContextManager | null = null;
+let currentScopeSignature = '';
 let commandRevision = 0;
 let stopWatching: (() => void) | undefined;
 let cacheClearing = false;
@@ -129,15 +131,24 @@ function disposeSession(): void {
 function activateContextScope(manager: IContextManager | null, targetLanguage: string): void {
   if (!manager) return;
   const reading = adapter.getReadingIdentity();
+  const target = targetLanguage.trim();
+  const scope =
+    reading && target ? ({ reading, targetLanguage: target } satisfies ContextScope) : undefined;
+  const signature = JSON.stringify([scope?.reading ?? null, scope?.targetLanguage ?? '']);
+  if (currentScopeOwner === manager && currentScopeSignature === signature) return;
+  currentScopeOwner = manager;
+  currentScopeSignature = signature;
   if (manager.setScope) {
-    void manager.setScope(
-      reading && targetLanguage.trim()
-        ? ({ reading, targetLanguage } satisfies ContextScope)
-        : undefined
-    );
+    void manager.setScope(scope);
   } else {
     void manager.reset();
   }
+}
+
+function refreshReaderScope(): void {
+  if (!activeOrchestrator || !currentContextManager?.setScope) return;
+  if (adapter.getChapterId() !== currentChapterId) return;
+  activateContextScope(currentContextManager, currentTargetLanguage);
 }
 
 function watchReader(): void {
@@ -178,6 +189,7 @@ function watchReader(): void {
     }
   };
   const stopAdapter = adapter.observeMangaImages(schedule);
+  const stopIdentity = adapter.observeReadingIdentity?.(refreshReaderScope);
   window.addEventListener('scroll', schedule, { passive: true });
   window.addEventListener('resize', schedule);
   window.addEventListener('popstate', refresh);
@@ -186,6 +198,7 @@ function watchReader(): void {
   stopWatching = () => {
     clearTimeout(timer);
     stopAdapter();
+    stopIdentity?.();
     window.removeEventListener('scroll', schedule);
     window.removeEventListener('resize', schedule);
     window.removeEventListener('popstate', refresh);
