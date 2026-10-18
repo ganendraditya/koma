@@ -16,8 +16,10 @@ import type {
 function createMemoryStorage() {
   const data: Record<string, unknown> = {};
   const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+  let fullReads = 0;
   const area: ContextStorageArea = {
     get(keys, callback) {
+      if (keys === null) fullReads++;
       const result =
         keys === null
           ? copy(data)
@@ -35,7 +37,7 @@ function createMemoryStorage() {
       callback?.();
     },
   };
-  return { area, data };
+  return { area, data, fullReads: () => fullReads };
 }
 
 const chapterOne = {
@@ -94,6 +96,19 @@ afterEach(() => {
 });
 
 describe('Persistent reading context', () => {
+  it('builds the LRU index once instead of scanning storage on each operation', async () => {
+    const { area, fullReads } = createMemoryStorage();
+    const store = new ContextStore({ storageArea: area });
+
+    await store.save('chapter-a', { dialogueContributions: [], glossary: [] });
+    await store.load('chapter-a');
+    await store.save('chapter-b', { dialogueContributions: [], glossary: [] });
+    await store.load('chapter-b');
+    await store.save('chapter-c', { dialogueContributions: [], glossary: [] });
+
+    expect(fullReads()).toBe(1);
+  });
+
   it('restores chapter dialogue and shares glossary only within the known series and target language', async () => {
     const { area, data } = createMemoryStorage();
     const store = new ContextStore({ storageArea: area });
