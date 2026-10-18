@@ -21,7 +21,11 @@ afterEach(() => {
 function storage() {
   const data: Record<string, unknown> = {};
   const area = {
-    get: vi.fn(async () => structuredClone(data)),
+    get: vi.fn(async (keys: string[] | null) =>
+      keys === null
+        ? structuredClone(data)
+        : Object.fromEntries(keys.filter((key) => key in data).map((key) => [key, data[key]]))
+    ),
     set: vi.fn(async (values: Record<string, unknown>) => {
       Object.assign(data, structuredClone(values));
     }),
@@ -279,6 +283,20 @@ describe('Accepted reading replay', () => {
 });
 
 describe('Persistent replay ownership and budgets', () => {
+  it('scans extension storage once for cache maintenance instead of on every operation', async () => {
+    const { area } = storage();
+    const cache = new ReplayStore({ storageArea: area });
+
+    await save(cache, record(0));
+    await cache.lookup(identity(0));
+    await save(cache, record(1));
+    await cache.size();
+    await cache.invalidate(reading, 'en', 1);
+
+    expect(area.get).toHaveBeenCalledTimes(1);
+    expect(area.get).toHaveBeenCalledWith(null, expect.any(Function));
+  });
+
   it('safe-misses v1 and purges corrupt v2 records without touching context/settings', async () => {
     const { data, area } = storage();
     data['koma_cache:koma:cache:v1:old'] = { result: result() };
@@ -393,6 +411,32 @@ describe('Persistent replay ownership and budgets', () => {
     expect(data.koma_context).toHaveLength(2000);
   });
 
+  it('updates the cached quota index when unrelated extension storage changes', async () => {
+    const { data, area } = storage();
+    const listeners: Array<
+      (changes: Record<string, { newValue?: unknown }>, areaName: string) => void
+    > = [];
+    vi.stubGlobal('chrome', {
+      runtime: {},
+      storage: {
+        onChanged: {
+          addListener: (listener: (typeof listeners)[number]) => listeners.push(listener),
+        },
+      },
+    });
+    const cache = new ReplayStore({ storageArea: area, quotaBytes: 2200 });
+    await cache.size();
+
+    data.koma_context = 'x'.repeat(2000);
+    for (const listener of listeners) {
+      listener({ koma_context: { newValue: data.koma_context } }, 'local');
+    }
+
+    expect(await save(cache, record())).toEqual({ warning: CACHE_PERSISTENCE_WARNING });
+    expect(area.set).not.toHaveBeenCalled();
+    expect(area.get).toHaveBeenCalledTimes(1);
+  });
+
   it('retries a quota write once after eviction and does not expose storage payloads', async () => {
     const { data, area } = storage();
     const cache = new ReplayStore({ storageArea: area });
@@ -430,6 +474,36 @@ describe('Persistent replay ownership and budgets', () => {
     const restart = new ReplayStore({ storageArea: area });
     await restart.accept(record(), (await cache.lookup(identity())).generation);
     expect(await restart.size()).toBe(0);
+  });
+
+  it('does not stale an in-flight write when an unrelated series is invalidated', async () => {
+    const { area } = storage();
+    const cache = new ReplayStore({ storageArea: area });
+    const active = await cache.lookup(identity());
+    const other = record();
+    other.identity.reading = { site: 'mangadex', chapterId: 'chapter-b', seriesId: 'series-b' };
+    const unrelated = await cache.lookup(other.identity);
+
+    await cache.invalidate(other.identity.reading, 'en');
+
+    expect(await cache.accept(record(), active.generation)).toEqual({});
+    expect((await cache.accept(other, unrelated.generation)).warning).toContain('not saved');
+  });
+
+  it('scopes page-suffix invalidation to the selected chapter pages', async () => {
+    const { area } = storage();
+    const cache = new ReplayStore({ storageArea: area });
+    const first = await cache.lookup(identity(0));
+    const suffix = await cache.lookup(identity(1));
+    const anotherChapter = record(0);
+    anotherChapter.identity.reading = { ...reading, chapterId: 'chapter-b' };
+    const otherChapter = await cache.lookup(anotherChapter.identity);
+
+    await cache.invalidate(reading, 'en', 1);
+
+    expect(await cache.accept(record(0), first.generation)).toEqual({});
+    expect((await cache.accept(record(1), suffix.generation)).warning).toContain('not saved');
+    expect(await cache.accept(anotherChapter, otherChapter.generation)).toEqual({});
   });
 
   it('invalidates only the chapter suffix or matching series/target and retains records', async () => {
