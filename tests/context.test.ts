@@ -9,6 +9,7 @@ import {
   GlossaryEntry,
 } from '@core/contracts';
 import { buildGeminiSystemPrompt } from '@providers/gemini/prompt';
+import { InvalidProviderResponseError } from '@core/errors';
 
 class MockTranslationProvider implements TranslationProvider {
   readonly id = 'mock-provider';
@@ -118,6 +119,31 @@ describe('KOMA-009: Minimal Context-Aware Translation', () => {
         translatedText: 'Tunggu aku!',
         pageIndex: 1,
       });
+    });
+
+    it('orders commits by page index, excludes future pages, and deduplicates replay by image', async () => {
+      const orderedManager = new ContextManager();
+      const orderedProvider = new ContextAwareProvider(mockProvider, orderedManager);
+
+      await orderedProvider.translatePage({
+        image: createDummyImage('page_10', 10),
+        targetLanguage: 'id',
+      });
+      await orderedProvider.translatePage({
+        image: createDummyImage('page_03', 3),
+        targetLanguage: 'id',
+      });
+
+      expect(mockProvider.calls.at(-1)?.context?.recentDialogue).toEqual([]);
+      expect(orderedManager.getPacket(11).recentDialogue?.map((entry) => entry.pageIndex)).toEqual([
+        3, 10,
+      ]);
+
+      await orderedProvider.translatePage({
+        image: createDummyImage('page_10', 10),
+        targetLanguage: 'id',
+      });
+      expect(orderedManager.getDialogueCount()).toBe(2);
     });
 
     it('retains dialogue history from multiple previous translated images', async () => {
@@ -415,6 +441,13 @@ describe('KOMA-009: Minimal Context-Aware Translation', () => {
       const glossary = contextManager.getGlossary();
       expect(glossary).toHaveLength(1);
       expect(glossary[0].translation).toBe('Haki');
+
+      contextManager.addGlossaryEntry({
+        original: '覇気',
+        translation: 'Explicit user change',
+        isHard: true,
+      });
+      expect(contextManager.getGlossary()[0].translation).toBe('Explicit user change');
     });
 
     it('adopts soft glossary updates when no hard-pinned entry exists', () => {
@@ -530,6 +563,34 @@ describe('KOMA-009: Minimal Context-Aware Translation', () => {
       );
     });
 
+    it('rejects invalid provider output without committing it to context', async () => {
+      const invalidProvider: TranslationProvider = {
+        id: 'invalid-provider',
+        name: 'Invalid Provider',
+        capabilities: () => mockProvider.capabilities(),
+        translatePage: async (request) => ({
+          pageId: 'page_001',
+          imageId: request.image.id,
+          sourceLanguage: '',
+          targetLanguage: request.targetLanguage,
+          bubbles: [
+            {
+              id: 'bubble_1',
+              translatedText: 'Invalid result',
+              box: { ymin: 0, xmin: 0, ymax: 100, xmax: 100 },
+            },
+          ],
+        }),
+      };
+      const isolatedManager = new ContextManager();
+      const provider = new ContextAwareProvider(invalidProvider, isolatedManager);
+
+      await expect(
+        provider.translatePage({ image: createDummyImage('invalid'), targetLanguage: 'id' })
+      ).rejects.toBeInstanceOf(InvalidProviderResponseError);
+      expect(isolatedManager.getDialogueCount()).toBe(0);
+    });
+
     it('safely ignores corrupt or malformed translation results in recordTranslation', () => {
       contextManager.recordTranslation(null);
       contextManager.recordTranslation(undefined);
@@ -608,6 +669,23 @@ describe('KOMA-009: Minimal Context-Aware Translation', () => {
       expect(terms).toContain('Pinned');
       expect(terms).toContain('Soft2');
       expect(terms).not.toContain('Soft1');
+    });
+
+    it('keeps hard glossary entries within the configured bound', () => {
+      const boundedManager = new ContextManager({ maxGlossaryEntries: 2 });
+      expect(
+        boundedManager.addGlossaryEntry({ original: 'Pinned 1', translation: 'A', isHard: true })
+      ).toBe(true);
+      expect(
+        boundedManager.addGlossaryEntry({ original: 'Pinned 2', translation: 'B', isHard: true })
+      ).toBe(true);
+      expect(
+        boundedManager.addGlossaryEntry({ original: 'Pinned 3', translation: 'C', isHard: true })
+      ).toBe(false);
+      expect(boundedManager.getGlossary().map((entry) => entry.original)).toEqual([
+        'Pinned 1',
+        'Pinned 2',
+      ]);
     });
 
     it('safely ignores non-string inputs in addGlossaryEntry and removeGlossaryEntry', () => {

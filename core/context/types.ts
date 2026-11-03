@@ -1,4 +1,22 @@
-import { ContextPacket, DialogueEntry, GlossaryEntry } from '@core/contracts';
+import { ContextPacket, DialogueEntry, GlossaryEntry, ReadingIdentity } from '@core/contracts';
+
+export interface ContextScope {
+  reading: ReadingIdentity;
+  targetLanguage: string;
+}
+
+export interface DialogueContributionSnapshot {
+  imageId: string;
+  pageIndex?: number;
+  entries: DialogueEntry[];
+  order: number;
+}
+
+export interface ContextSnapshot {
+  schemaVersion: 1;
+  dialogueContributions: DialogueContributionSnapshot[];
+  glossary: GlossaryEntry[];
+}
 
 export interface ContextManagerOptions {
   /**
@@ -35,9 +53,15 @@ export interface IContextManager {
   translationStyle?: 'natural' | 'literal';
   preserveHonorifics?: boolean;
 
-  getPacket(): ContextPacket;
-  recordTranslation(result: unknown, pageIndex?: number): void;
-  addGlossaryEntry(entry: GlossaryEntry): void;
+  getPacket(beforePageIndex?: number): ContextPacket;
+  recordTranslation(result: unknown, pageIndex?: number, imageId?: string): void;
+  commitTranslation?(
+    result: unknown,
+    pageIndex?: number,
+    imageId?: string,
+    signal?: AbortSignal
+  ): Promise<void>;
+  addGlossaryEntry(entry: GlossaryEntry): boolean;
   removeGlossaryEntry(original: string): boolean;
   getGlossary(): GlossaryEntry[];
   clearGlossary(): void;
@@ -45,5 +69,9 @@ export interface IContextManager {
   getDialogueCount(): number;
   setMaxDialogueEntries(max: number): void;
   getMaxDialogueEntries(): number;
-  reset(): void;
+  reset(): void | Promise<void>;
+  resetScope?(scope: ContextScope): Promise<void>;
+  ready?(): Promise<void>;
+  flush?(): Promise<void>;
+  setScope?(scope?: ContextScope): Promise<void>;
 }

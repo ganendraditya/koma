@@ -1,7 +1,8 @@
-import type { MangaImage } from '@core/contracts';
+import type { MangaImage, ReadingIdentity } from '@core/contracts';
 import type { SiteAdapter } from './index';
 
 const CHAPTER_PATH = /^\/chapter\/([a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12})(?:\/[1-9]\d*)?\/?$/i;
+const TITLE_PATH = /^\/title\/([a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12})(?:\/[^/]+)?\/?$/i;
 const PAGE_FILE = /^([1-9]\d*)-[a-f\d]{32,}\.(?:png|jpe?g|webp|gif|avif)$/i;
 const PAGE_SELECTOR = '.md--reader-pages img.img';
 
@@ -32,6 +33,36 @@ export class MangaDexAdapter implements SiteAdapter {
 
   getChapterId(url = this.getUrl()): string | null {
     return readerUrl(url)?.pathname.match(CHAPTER_PATH)?.[1].toLowerCase() ?? null;
+  }
+
+  getReadingIdentity(url = this.getUrl()): ReadingIdentity | null {
+    const pageUrl = readerUrl(url);
+    const chapterId = pageUrl?.pathname.match(CHAPTER_PATH)?.[1].toLowerCase();
+    if (!pageUrl || !chapterId) return null;
+
+    const seriesIds = new Set<string>();
+    const readerRoot = this.root.querySelector('.md--reader-wrap');
+    for (const link of readerRoot?.querySelectorAll<HTMLAnchorElement>('a[href]') ?? []) {
+      const href = link.getAttribute('href');
+      if (!href) continue;
+
+      let titleUrl: URL;
+      try {
+        titleUrl = new URL(href, pageUrl);
+      } catch {
+        continue;
+      }
+
+      const parsedTitleUrl = readerUrl(titleUrl.href);
+      const seriesId = parsedTitleUrl?.pathname.match(TITLE_PATH)?.[1].toLowerCase();
+      if (seriesId) seriesIds.add(seriesId);
+    }
+
+    return {
+      site: 'mangadex',
+      chapterId,
+      ...(seriesIds.size === 1 ? { seriesId: [...seriesIds][0] } : {}),
+    };
   }
 
   detectMangaImages(): MangaImage[] {

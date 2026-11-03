@@ -66,6 +66,36 @@ describe('MangaDex adapter', () => {
     expect(adapter.detectMangaImages()).toEqual(images);
   });
 
+  it('returns a normalized MangaDex identity and falls back to chapter-only when series is ambiguous', () => {
+    const { adapter } = setup();
+    expect(adapter.getReadingIdentity()).toEqual({
+      site: 'mangadex',
+      chapterId,
+      seriesId: '11111111-1111-4111-8111-111111111111',
+    });
+
+    document
+      .querySelector('header')!
+      .insertAdjacentHTML(
+        'beforeend',
+        '<a href="/title/33333333-3333-4333-8333-333333333333/unrelated">Unrelated navigation</a>'
+      );
+    expect(adapter.getReadingIdentity()).toEqual({
+      site: 'mangadex',
+      chapterId,
+      seriesId: '11111111-1111-4111-8111-111111111111',
+    });
+
+    document
+      .querySelector('.md--reader-wrap')!
+      .insertAdjacentHTML(
+        'beforeend',
+        '<a href="/title/22222222-2222-4222-8222-222222222222/other-series">Other</a>'
+      );
+    expect(adapter.getReadingIdentity()).toEqual({ site: 'mangadex', chapterId });
+    expect(adapter.getReadingIdentity('https://mangadex.org/')).toBeNull();
+  });
+
   it('keeps IDs and page indices stable across lazy loading, duplicate nodes, and blob replacement', () => {
     const { adapter } = setup();
     const before = adapter.detectMangaImages();

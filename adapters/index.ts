@@ -1,4 +1,4 @@
-import { MangaImage } from '@core/contracts';
+import { MangaImage, ReadingIdentity } from '@core/contracts';
 
 /**
  * Interface for website-specific manga readers and image extractors (e.g. MangaDex).
@@ -18,6 +18,9 @@ export interface SiteAdapter {
    * Scrapes or observes manga images from the reader DOM.
    */
   detectMangaImages(): MangaImage[];
+
+  /** Returns stable series/chapter identity when the reader exposes it. */
+  getReadingIdentity?(url?: string): ReadingIdentity | null;
 
   /**
    * Resolves the DOM element corresponding to a detected manga image.

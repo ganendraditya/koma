@@ -510,12 +510,15 @@ export async function initializePopup(root: Document = globalThis.document): Pro
 
     chrome.tabs.sendMessage(
       activeTabId,
-      { type: EXTENSION_MESSAGE_TYPES.RESET_CONTEXT },
+      {
+        type: EXTENSION_MESSAGE_TYPES.RESET_CONTEXT,
+        targetLanguage: settings?.targetLanguage || targetLangSelect.value,
+      },
       (response: ResetContextResponse | undefined) => {
         if (chrome.runtime.lastError || !response?.success) {
-          showFeedback('Failed to reset page context.', 'error');
+          showFeedback(response?.error || 'Failed to reset page context.', 'error');
         } else {
-          showFeedback('Context memory reset successfully.', 'success');
+          showFeedback('Context cleared for this reading scope.', 'success');
         }
       }
     );
