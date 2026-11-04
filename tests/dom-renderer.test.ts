@@ -393,3 +393,605 @@ describe('KOMA-006: DOM Overlay Renderer', () => {
     });
   });
 });
+
+describe('KOMA-017: artwork inspection and clipped-text fallback', () => {
+  let renderer: DOMOverlayRenderer;
+  let container: HTMLDivElement;
+  let image: HTMLImageElement;
+
+  const pageResult = (bubbles: TranslationResult['bubbles']): TranslationResult => ({
+    pageId: 'chapter_01',
+    imageId: 'img_page_01',
+    sourceLanguage: 'ja',
+    targetLanguage: 'id',
+    bubbles,
+  });
+
+  const bubble = (id: string, overrides: Partial<TranslationResult['bubbles'][number]> = {}) => ({
+    id,
+    box: { ymin: 100, xmin: 200, ymax: 300, xmax: 600 },
+    sourceText: '待て',
+    translatedText: 'Tunggu',
+    bubbleType: 'speech' as const,
+    ...overrides,
+  });
+
+  /** jsdom has no layout engine, so geometry is mocked the way a browser would report it. */
+  function mockLayout(options: { overflow: boolean; width?: number; height?: number }): void {
+    const width = options.width ?? 300;
+    const height = options.height ?? 60;
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(width);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(height);
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(width);
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(
+      options.overflow ? height + 80 : height - 10
+    );
+  }
+
+  function waitForPortalSync(): Promise<void> {
+    return new Promise((resolve) => window.setTimeout(resolve, 25));
+  }
+
+  beforeEach(() => {
+    renderer = new DOMOverlayRenderer();
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    image = document.createElement('img');
+    image.src = 'https://example.com/manga/page1.jpg';
+    container.appendChild(image);
+  });
+
+  afterEach(() => {
+    renderer.removeAllOverlays();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    container.remove();
+  });
+
+  it('reveals the untouched artwork on hover and restores it on leave', () => {
+    vi.useFakeTimers();
+    mockLayout({ overflow: false });
+    const patch = renderer.render(pageResult([bubble('bubble_001')]), image).bubbles[0];
+    const paintedBackground = patch.element.style.getPropertyValue('background-color');
+    const paintedText = patch.textElement.style.getPropertyValue('color');
+
+    expect(paintedBackground).not.toBe('transparent');
+    patch.element.dispatchEvent(new Event('pointerenter'));
+    expect(patch.inspected).toBeFalsy();
+    expect(patch.element.style.getPropertyValue('background-color')).toBe(paintedBackground);
+    vi.advanceTimersByTime(299);
+    expect(patch.inspected).toBeFalsy();
+    vi.advanceTimersByTime(1);
+    expect(patch.inspected).toBe(true);
+    expect(patch.element.style.getPropertyValue('background-color')).toBe('transparent');
+    expect(patch.element.style.getPropertyValue('border-color')).toBe('transparent');
+    expect(patch.textElement.style.getPropertyValue('color')).toBe('transparent');
+    expect(patch.element.tabIndex).toBe(0);
+
+    patch.element.dispatchEvent(new Event('pointerleave'));
+    expect(patch.inspected).toBe(false);
+    expect(patch.element.style.getPropertyValue('background-color')).toBe(paintedBackground);
+    expect(patch.element.style.getPropertyPriority('background-color')).toBe('important');
+    expect(patch.textElement.style.getPropertyValue('color')).toBe(paintedText);
+    expect(patch.inspected).toBe(false);
+  });
+
+  it('cancels a pending hover reveal when the pointer leaves before the delay', () => {
+    vi.useFakeTimers();
+    mockLayout({ overflow: false });
+    const patch = renderer.render(pageResult([bubble('bubble_001')]), image).bubbles[0];
+
+    patch.element.dispatchEvent(new Event('pointerenter'));
+    vi.advanceTimersByTime(299);
+    patch.element.dispatchEvent(new Event('pointerleave'));
+    vi.advanceTimersByTime(1);
+
+    expect(patch.inspected).toBe(false);
+    expect(patch.element.style.getPropertyValue('background-color')).toBe(
+      'rgba(255, 255, 255, 0.96)'
+    );
+  });
+
+  it('toggles inspection from the keyboard and restores it with Escape', () => {
+    mockLayout({ overflow: false });
+    const patch = renderer.render(pageResult([bubble('bubble_001')]), image).bubbles[0];
+
+    const press = (key: string) =>
+      patch.element.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      );
+
+    press(' ');
+    expect(patch.inspected).toBe(true);
+    expect(patch.element.style.getPropertyValue('background-color')).toBe('transparent');
+
+    press('Escape');
+    expect(patch.inspected).toBe(false);
+    expect(patch.element.style.getPropertyValue('background-color')).toBe(
+      'rgba(255, 255, 255, 0.96)'
+    );
+    expect(patch.element.style.getPropertyPriority('background-color')).toBe('important');
+
+    press('Enter');
+    expect(patch.inspected).toBe(true);
+    press('Enter');
+    expect(patch.inspected).toBe(false);
+
+    // A deliberate keyboard reveal outlives the pointer, so a stray mouse move cannot cancel it.
+    press('Enter');
+    expect(patch.inspected).toBe(true);
+    patch.element.dispatchEvent(new Event('pointerleave'));
+    expect(patch.inspected).toBe(true);
+    patch.element.dispatchEvent(new Event('pointerenter'));
+    patch.element.dispatchEvent(new Event('pointerleave'));
+    expect(patch.inspected).toBe(true);
+    press('Escape');
+    expect(patch.inspected).toBe(false);
+    expect(patch.toggledInspection).toBe(false);
+  });
+
+  it('toggles artwork inspection on touch taps without changing mouse clicks', () => {
+    mockLayout({ overflow: false });
+    const patch = renderer.render(pageResult([bubble('bubble_001')]), image).bubbles[0];
+    const pointerUp = (pointerType: string) => {
+      const event = new Event('pointerup', { bubbles: true });
+      Object.defineProperty(event, 'pointerType', { value: pointerType });
+      patch.element.dispatchEvent(event);
+    };
+
+    pointerUp('mouse');
+    expect(patch.inspected).toBeFalsy();
+
+    pointerUp('touch');
+    expect(patch.inspected).toBe(true);
+    expect(patch.element.style.getPropertyValue('background-color')).toBe('transparent');
+
+    pointerUp('touch');
+    expect(patch.inspected).toBe(false);
+    expect(patch.element.style.getPropertyValue('background-color')).toBe(
+      'rgba(255, 255, 255, 0.96)'
+    );
+  });
+
+  it('adds a fallback affordance only when fitted text still overflows the patch', () => {
+    mockLayout({ overflow: true });
+    const clipped = renderer.render(
+      pageResult([bubble('bubble_001'), bubble('bubble_002')]),
+      image
+    );
+    expect(clipped.bubbles.every((entry) => entry.clipIndicator?.isConnected)).toBe(true);
+    const chip = clipped.bubbles[0].clipIndicator!;
+    expect(chip.textContent).toBe('Show all');
+    expect(chip.getAttribute('aria-label')).toBe(
+      'Show the complete translation and the original text'
+    );
+    expect(chip.getAttribute('data-koma-clip-indicator')).toBe('bubble_001');
+    // The patch clips its own overflow, so the chip must hang off the layer to stay clickable.
+    expect(chip.parentElement).toBe(clipped.overlayLayer);
+    expect(chip.style.getPropertyValue('top')).toBe('30%');
+    expect(chip.style.getPropertyValue('left')).toBe('60%');
+
+    renderer.removeAllOverlays();
+    mockLayout({ overflow: false });
+    const fits = renderer.render(pageResult([bubble('bubble_001')]), image);
+    expect(fits.bubbles[0].clipIndicator).toBeUndefined();
+    expect(fits.overlayLayer.querySelector('[data-koma-clip-indicator]')).toBeNull();
+  });
+
+  it('opens the complete translation readout with source text and closes it with Escape', () => {
+    mockLayout({ overflow: true, width: 320, height: 90 });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      left: 10,
+      top: 20,
+      right: 330,
+      bottom: 110,
+      width: 320,
+      height: 90,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const outcome = renderer.render(
+      pageResult([
+        bubble('bubble_001'),
+        bubble('bubble_002', { sourceText: undefined, translatedText: 'Lari!' }),
+      ]),
+      image
+    );
+
+    (outcome.bubbles[0].clipIndicator as HTMLElement).click();
+    const panel = outcome.overlayLayer.querySelector<HTMLElement>('[data-koma-bubble-readout]');
+    expect(panel).not.toBeNull();
+    expect(panel!.textContent).toContain('Tunggu');
+    expect(panel!.textContent).toContain('Original: 待て');
+    expect(document.activeElement).toBe(panel);
+    expect(panel!.style.getPropertyPriority('pointer-events')).toBe('important');
+
+    // A second readout replaces the first, and a bubble without source text invents none.
+    (outcome.bubbles[1].clipIndicator as HTMLElement).click();
+    expect(outcome.overlayLayer.querySelectorAll('[data-koma-bubble-readout]')).toHaveLength(1);
+    const second = outcome.overlayLayer.querySelector<HTMLElement>('[data-koma-bubble-readout]')!;
+    expect(second.textContent).toContain('Lari!');
+    expect(second.textContent).not.toContain('Original:');
+
+    second.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(outcome.overlayLayer.querySelector('[data-koma-bubble-readout]')).toBeNull();
+    expect(document.activeElement).toBe(outcome.bubbles[1].element);
+
+    // Escape from inside the panel also restores the artwork behind its patch.
+    const patch = outcome.bubbles[0];
+    patch.element.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    expect(patch.inspected).toBe(true);
+    (patch.clipIndicator as HTMLElement).click();
+    const reopened = outcome.overlayLayer.querySelector<HTMLElement>('[data-koma-bubble-readout]')!;
+    reopened.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(patch.inspected).toBe(false);
+    expect(outcome.overlayLayer.querySelector('[data-koma-bubble-readout]')).toBeNull();
+  });
+
+  it('closes the readout with its button, outside pointer, focus leaving, or a second chip click', async () => {
+    mockLayout({ overflow: true, width: 320, height: 90 });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      left: 10,
+      top: 20,
+      right: 330,
+      bottom: 110,
+      width: 320,
+      height: 90,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const patch = renderer.render(pageResult([bubble('bubble_001')]), image).bubbles[0];
+    const chip = patch.clipIndicator!;
+
+    chip.click();
+    const firstPanel = patch.readoutElement!;
+    const closeButton = firstPanel.querySelector<HTMLButtonElement>('[data-koma-readout-close]')!;
+    expect(closeButton.textContent).toBe('Close');
+    expect(closeButton.getAttribute('aria-label')).toBe('Close full translation');
+    expect(closeButton.style.minHeight).toBe('44px');
+    expect(closeButton.style.minWidth).toBe('44px');
+    closeButton.click();
+    expect(firstPanel.isConnected).toBe(false);
+    expect(document.activeElement).toBe(chip);
+
+    const outsidePointerTarget = document.createElement('button');
+    const outsidePointerAction = vi.fn();
+    outsidePointerTarget.addEventListener('click', outsidePointerAction);
+    document.body.append(outsidePointerTarget);
+    chip.click();
+    const secondPanel = patch.readoutElement!;
+    outsidePointerTarget.click();
+    expect(secondPanel.isConnected).toBe(false);
+    expect(patch.readoutElement).toBeUndefined();
+    expect(outsidePointerAction).toHaveBeenCalledOnce();
+
+    chip.click();
+    const thirdPanel = patch.readoutElement!;
+    outsidePointerTarget.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    outsidePointerTarget.click();
+    expect(thirdPanel.isConnected).toBe(false);
+    expect(patch.readoutElement).toBeUndefined();
+    expect(outsidePointerAction).toHaveBeenCalledTimes(2);
+    outsidePointerTarget.remove();
+
+    chip.click();
+    const fourthPanel = patch.readoutElement!;
+    const externalButton = document.createElement('button');
+    document.body.append(externalButton);
+    externalButton.focus();
+    await new Promise<void>((resolve) => window.queueMicrotask(resolve));
+    expect(fourthPanel.isConnected).toBe(false);
+
+    chip.click();
+    const fifthPanel = patch.readoutElement!;
+    chip.click();
+    expect(fifthPanel.isConnected).toBe(false);
+    expect(patch.readoutElement).toBeUndefined();
+    externalButton.remove();
+  });
+
+  it('uses a viewport-clamped readout when the image layer is too small to contain one', async () => {
+    mockLayout({ overflow: true, width: 4, height: 4 });
+    vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024);
+    vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768);
+    let imageSize = { width: 4, height: 4 };
+    let imageTop = 800;
+    let resizeCallback: ResizeObserverCallback | undefined;
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallback = callback;
+        }
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      }
+    );
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      const box =
+        this.hasAttribute('data-koma-image-id') && this.tagName === 'IMG'
+          ? { left: 20, top: imageTop, ...imageSize }
+          : this.hasAttribute('data-koma-overlay-layer')
+            ? { left: 20, top: imageTop, ...imageSize }
+            : this.hasAttribute('data-koma-bubble')
+              ? { left: 20, top: imageTop, width: 1, height: 1 }
+              : { left: 0, top: 0, width: 885, height: 600 };
+      return {
+        ...box,
+        right: box.left + box.width,
+        bottom: box.top + box.height,
+        x: box.left,
+        y: box.top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+
+    const longResult = pageResult([
+      bubble('bubble_001', {
+        translatedText:
+          'This complete translation is much longer than the tiny patch and must remain readable in the fallback panel.',
+      }),
+    ]);
+    const outcome = renderer.render(longResult, image);
+    const chip = outcome.bubbles[0].clipIndicator!;
+    expect(chip.isConnected).toBe(true);
+    expect(chip.parentElement).toBe(document.body);
+    expect(chip.style.position).toBe('fixed');
+    expect(chip.style.visibility).toBe('hidden');
+    expect(Number.parseFloat(chip.style.width)).toBeGreaterThanOrEqual(72);
+    expect(Number.parseFloat(chip.style.height)).toBeGreaterThanOrEqual(44);
+
+    imageTop = 30;
+    window.dispatchEvent(new Event('scroll'));
+    document.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await waitForPortalSync();
+    expect(chip.style.visibility).toBe('visible');
+    expect(chip.style.left).toBe('20px');
+    expect(chip.style.top).toBe('30px');
+    expect(outcome.wrapperElement.matches('[data-koma-wrapper="true"]')).toBe(true);
+    expect(outcome.overlayLayer.getBoundingClientRect().width).toBe(4);
+    chip.focus();
+    chip.click();
+
+    const panel = outcome.bubbles[0].readoutElement!;
+    expect(panel.parentElement).toBe(document.body);
+    expect(panel.style.position).toBe('fixed');
+    expect(Number.parseFloat(panel.style.width)).toBeGreaterThan(4);
+    expect(Number.parseFloat(panel.style.maxHeight)).toBeGreaterThan(4);
+    expect(panel.style.left).toBe('20px');
+    expect(panel.style.top).toBe('30px');
+    expect(panel.textContent).toContain('must remain readable in the fallback panel.');
+
+    imageTop = 230;
+    window.dispatchEvent(new Event('scroll'));
+    document.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await waitForPortalSync();
+    expect(outcome.bubbles[0].clipIndicator!.style.top).toBe('230px');
+    expect(panel.style.top).toBe('230px');
+
+    imageTop = 800;
+    window.dispatchEvent(new Event('scroll'));
+    document.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await waitForPortalSync();
+    expect(outcome.bubbles[0].clipIndicator!.style.visibility).toBe('hidden');
+    expect(panel.isConnected).toBe(false);
+
+    imageTop = 30;
+    window.dispatchEvent(new Event('scroll'));
+    document.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await waitForPortalSync();
+    expect(outcome.bubbles[0].clipIndicator!.style.visibility).toBe('visible');
+    expect(outcome.bubbles[0].clipIndicator!.style.top).toBe('30px');
+
+    const rerendered = renderer.render(longResult, image);
+    expect(
+      document.body.querySelectorAll('[data-koma-portal-image-id="img_page_01"]')
+    ).toHaveLength(1);
+    rerendered.bubbles[0].clipIndicator!.click();
+    expect(
+      document.body.querySelectorAll('[data-koma-portal-image-id="img_page_01"]')
+    ).toHaveLength(2);
+
+    rerendered.bubbles[0].readoutElement!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    );
+    imageSize = { width: 400, height: 600 };
+    resizeCallback?.([], {} as ResizeObserver);
+    expect(rerendered.bubbles[0].clipIndicator!.parentElement).toBe(rerendered.overlayLayer);
+    expect(rerendered.bubbles[0].clipIndicator!.hasAttribute('data-koma-portal-image-id')).toBe(
+      false
+    );
+    expect(rerendered.bubbles[0].clipIndicator!.style.position).toBe('absolute');
+
+    expect(renderer.removeOverlay('img_page_01')).toBe(true);
+    expect(container.querySelector('[data-koma-bubble-readout]')).toBeNull();
+    expect(container.querySelector('[data-koma-wrapper]')).toBeNull();
+    expect(
+      document.body.querySelectorAll('[data-koma-portal-image-id="img_page_01"]')
+    ).toHaveLength(0);
+  });
+
+  it('uses the viewport readout when a shallow image has no room near the patch', () => {
+    mockLayout({ overflow: true, width: 240, height: 80 });
+    vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024);
+    vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      const box =
+        this.hasAttribute('data-koma-image-id') && this.tagName === 'IMG'
+          ? { left: 10, top: 20, width: 240, height: 80 }
+          : this.hasAttribute('data-koma-overlay-layer')
+            ? { left: 10, top: 20, width: 240, height: 80 }
+            : this.hasAttribute('data-koma-bubble')
+              ? { left: 20, top: 92, width: 96, height: 8 }
+              : { left: 0, top: 0, width: 885, height: 600 };
+      return {
+        ...box,
+        right: box.left + box.width,
+        bottom: box.top + box.height,
+        x: box.left,
+        y: box.top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+
+    const outcome = renderer.render(
+      pageResult([
+        bubble('bubble_001', {
+          box: { ymin: 900, xmin: 100, ymax: 1000, xmax: 500 },
+          translatedText: 'This complete translation needs more vertical room than the patch.',
+        }),
+      ]),
+      image
+    );
+    outcome.bubbles[0].clipIndicator!.click();
+
+    const panel = outcome.bubbles[0].readoutElement!;
+    expect(panel.parentElement).toBe(document.body);
+    expect(panel.style.position).toBe('fixed');
+    expect(Number.parseFloat(panel.style.maxHeight)).toBeGreaterThanOrEqual(72);
+    expect(panel.textContent).toContain('needs more vertical room than the patch.');
+  });
+
+  it('keeps the fallback affordance operable while the artwork is being inspected', () => {
+    mockLayout({ overflow: true, width: 320, height: 90 });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      left: 10,
+      top: 20,
+      right: 330,
+      bottom: 110,
+      width: 320,
+      height: 90,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const patch = renderer.render(pageResult([bubble('bubble_001')]), image).bubbles[0];
+
+    vi.useFakeTimers();
+    patch.element.dispatchEvent(new Event('pointerenter'));
+    vi.advanceTimersByTime(300);
+    expect(patch.inspected).toBe(true);
+    expect(patch.clipIndicator!.style.getPropertyValue('visibility')).toBe('');
+
+    patch.clipIndicator!.click();
+    expect(patch.readoutElement?.isConnected).toBe(true);
+    expect(patch.element.style.getPropertyValue('background-color')).toBe('transparent');
+  });
+
+  it('keeps one focus-visible rule set on the layer across re-renders', () => {
+    mockLayout({ overflow: false });
+    renderer.render(pageResult([bubble('bubble_001')]), image);
+    const first = container.querySelectorAll('[data-koma-inspection-styles]');
+    expect(first).toHaveLength(1);
+    expect(first[0].textContent).toContain('[data-koma-bubble]:focus-visible');
+    expect(first[0].textContent).toContain('[data-koma-readout-close]:focus-visible');
+
+    renderer.render(pageResult([bubble('bubble_001'), bubble('bubble_002')]), image);
+    const second = container.querySelectorAll('[data-koma-inspection-styles]');
+    expect(second).toHaveLength(1);
+
+    const disabled = new DOMOverlayRenderer({ enableInspection: false });
+    const plain = disabled.render(pageResult([bubble('bubble_001')]), image);
+    expect(container.querySelector('[data-koma-inspection-styles]')).toBeNull();
+    expect(container.querySelectorAll('[data-koma-clip-indicator]')).toHaveLength(0);
+    expect(plain.bubbles[0].element.getAttribute('data-koma-bubble-inspectable')).toBeNull();
+    disabled.removeAllOverlays();
+  });
+
+  it('removes inspection state and fallbacks with the overlay', () => {
+    mockLayout({ overflow: true });
+    const outcome = renderer.render(pageResult([bubble('bubble_001')]), image);
+    (outcome.bubbles[0].clipIndicator as HTMLElement).click();
+
+    expect(renderer.removeOverlay('img_page_01')).toBe(true);
+    expect(container.querySelector('[data-koma-overlay-layer]')).toBeNull();
+    expect(container.querySelector('[data-koma-clip-indicator]')).toBeNull();
+    expect(container.querySelector('[data-koma-bubble-readout]')).toBeNull();
+    expect(container.querySelector('[data-koma-image-id]')).toBeNull();
+  });
+
+  it('pins the overlay layer to the image box when the wrapper is wider than the artwork', () => {
+    mockLayout({ overflow: false });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      const isImage = this.tagName === 'IMG';
+      const box = isImage
+        ? { left: 12, top: 40, width: 400, height: 600 }
+        : { left: 0, top: 0, width: 885, height: 600 };
+      return {
+        ...box,
+        right: box.left + box.width,
+        bottom: box.top + box.height,
+        x: box.left,
+        y: box.top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+
+    const outcome = renderer.render(pageResult([bubble('bubble_001')]), image);
+    const layer = outcome.overlayLayer;
+    expect(layer.style.getPropertyValue('width')).toBe('400px');
+    expect(layer.style.getPropertyValue('height')).toBe('600px');
+    expect(layer.style.getPropertyValue('left')).toBe('12px');
+    expect(layer.style.getPropertyValue('top')).toBe('40px');
+
+    // A bubble at x 20% must land at 20% of the artwork, not of the surrounding column.
+    const patch = outcome.bubbles[0].element;
+    expect(patch.style.getPropertyValue('left')).toBe('20%');
+    expect(patch.style.getPropertyValue('width')).toBe('40%');
+  });
+
+  it('falls back to filling the wrapper while the image has no measurable box', () => {
+    mockLayout({ overflow: false });
+    const outcome = renderer.render(pageResult([bubble('bubble_001')]), image);
+    expect(outcome.overlayLayer.style.getPropertyValue('width')).toBe('100%');
+    expect(outcome.overlayLayer.style.getPropertyValue('height')).toBe('100%');
+    expect(outcome.overlayLayer.style.getPropertyValue('left')).toBe('0px');
+    expect(outcome.overlayLayer.style.getPropertyValue('top')).toBe('0px');
+  });
+
+  it('measures placement drift and reports nothing for bubbles that render nothing', () => {
+    mockLayout({ overflow: false, width: 800, height: 1200 });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      // Project style percentages the way a browser would.
+      const fraction = (value: string) => (value.endsWith('%') ? parseFloat(value) / 100 : 0);
+      const left = 10 + 800 * fraction(this.style.left);
+      const top = 20 + 1200 * fraction(this.style.top);
+      return {
+        left,
+        top,
+        right: left + 800,
+        bottom: top + 1200,
+        width: 800,
+        height: 1200,
+        x: left,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+
+    renderer.render(pageResult([bubble('bubble_001'), bubble('bubble_002')]), image);
+    const drift = renderer.measureLayoutDrift('img_page_01');
+    expect(drift).not.toBeNull();
+    expect(drift!.bubbles).toHaveLength(2);
+    expect(drift!.maxDriftPercent).toBeLessThanOrEqual(2);
+    expect(drift!.maxDriftPercent).toBe(0);
+
+    renderer.removeAllOverlays();
+    const empty = renderer.render(pageResult([]), image);
+    expect(empty.bubbleCount).toBe(0);
+    expect(renderer.measureLayoutDrift('img_page_01')!.bubbles).toHaveLength(0);
+    expect(renderer.measureLayoutDrift('missing')).toBeNull();
+  });
+});
