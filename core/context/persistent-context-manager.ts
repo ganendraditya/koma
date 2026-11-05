@@ -23,6 +23,7 @@ interface ScopeWriteState {
   chapterGeneration: number;
   glossaryGeneration: number;
   glossaryRevision: number;
+  replayRevision?: string;
   localGlossary: ContextSnapshot['glossary'];
   localDialogue: DialogueContributionSnapshot[];
 }
@@ -91,6 +92,7 @@ function makeScopeWriteState(
     chapterGeneration: chapterRecord?.scopeGeneration ?? 0,
     glossaryGeneration: glossaryRecord?.scopeGeneration ?? 0,
     glossaryRevision: glossaryRecord?.glossaryRevision ?? 0,
+    replayRevision: glossaryRecord?.replayRevision ?? initial.replayRevision,
     localGlossary: (glossaryRecord?.glossary ?? initial.glossary).map((entry) => ({ ...entry })),
     localDialogue: cloneDialogue(
       chapterRecord?.dialogueContributions ?? initial.dialogueContributions
@@ -157,6 +159,7 @@ export class PersistentContextManager extends ContextManager {
         const initial = super.exportSnapshot();
         super.restoreSnapshot({
           schemaVersion: 1,
+          replayRevision: glossaryRecord?.replayRevision ?? initial.replayRevision,
           dialogueContributions:
             chapterRecord?.dialogueContributions ?? initial.dialogueContributions,
           glossary: glossaryRecord?.glossary ?? initial.glossary,
@@ -420,19 +423,28 @@ export class PersistentContextManager extends ContextManager {
     if (!state) throw new Error('Reading context has not finished loading.');
     const glossaryDelta = glossaryChanges(state.localGlossary, snapshot.glossary, source);
     const dialogueDelta = dialogueChanges(state.localDialogue, snapshot.dialogueContributions);
-    if (!glossaryDelta.length && !dialogueDelta.length) return;
+    const replayRevisionChanged = snapshot.replayRevision !== state.replayRevision;
+    if (!glossaryDelta.length && !dialogueDelta.length && !replayRevisionChanged) return;
 
     const result = await this.store.saveContext(scopeIds, {
       dialogueChanges: dialogueDelta,
       glossaryChanges: glossaryDelta,
+      replayRevision: snapshot.replayRevision,
       expectedGlossaryRevision: state.glossaryRevision,
       expectedChapterGeneration: state.chapterGeneration,
       expectedGlossaryGeneration: state.glossaryGeneration,
       maxDialogueEntries: this.getMaxDialogueEntries(),
     });
-    state.localGlossary = snapshot.glossary.map((entry) => ({ ...entry }));
+    state.localGlossary = result.glossary.map((entry) => ({ ...entry }));
     state.localDialogue = cloneDialogue(snapshot.dialogueContributions);
     state.glossaryRevision = result.glossaryRevision ?? 0;
+    state.replayRevision = result.replayRevision ?? state.replayRevision;
+    if (
+      signature === this.scopeSignature &&
+      snapshot.replayRevision === super.getReplayRevision() &&
+      result.replayRevision
+    )
+      super.setReplayRevision(result.replayRevision);
   }
 
   private async refreshWriteState(signature: string, scopeIds: ActiveScopeIds): Promise<void> {

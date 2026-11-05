@@ -164,9 +164,16 @@ describe('Adapter content-script integration', () => {
         disconnect: () => disconnectListeners.forEach((listener) => listener()),
       } as unknown as chrome.runtime.Port;
     });
-    const { getOrCreateOrchestrator, overlayRenderer, translationCache, sessionContextManager } =
+    const { getOrCreateOrchestrator, overlayRenderer, sessionContextManager } =
       await import('../extension/content/content-script');
-    const orchestrator = getOrCreateOrchestrator(config);
+    const { KomaTranslationCache } = await import('../core/cache');
+    const translationCache = new KomaTranslationCache();
+    const orchestrator = getOrCreateOrchestrator(
+      config,
+      sessionContextManager,
+      overlayRenderer,
+      translationCache
+    );
     await orchestrator.translateNext();
     await vi.waitFor(() =>
       expect(document.querySelectorAll('[data-koma-bubble-text]')).toHaveLength(2)
@@ -192,7 +199,12 @@ describe('Adapter content-script integration', () => {
       'en'
     );
     config = await getRuntimeProviderConfig();
-    const changedModel = getOrCreateOrchestrator(config);
+    const changedModel = getOrCreateOrchestrator(
+      config,
+      sessionContextManager,
+      overlayRenderer,
+      translationCache
+    );
     sessionContextManager.reset();
     await changedModel.translateNext();
     await vi.waitFor(() =>

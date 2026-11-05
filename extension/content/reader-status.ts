@@ -1,7 +1,7 @@
 import type { ReadingSessionState } from '@core/orchestrator';
 import styles from './reader-status.css?inline';
 
-type ReaderAction = 'pause' | 'translate';
+type ReaderAction = 'pause' | 'translate' | 'clear-cache';
 
 export class ReaderStatusView {
   private readonly host: HTMLDivElement;
@@ -28,7 +28,7 @@ export class ReaderStatusView {
     this.host.style.cssText = `all: initial !important; position: fixed !important;
       bottom: max(12px, env(safe-area-inset-bottom)) !important;
       right: max(12px, env(safe-area-inset-right)) !important;
-      max-width: calc(100vw - 24px) !important; z-index: 2147483647 !important;
+      max-width: calc(100% - 24px) !important; z-index: 2147483647 !important;
       display: block !important;`;
     const shadow = this.host.attachShadow({ mode: 'open' });
     shadow.innerHTML = `<style>${styles}</style>
@@ -40,6 +40,9 @@ export class ReaderStatusView {
         <p class="cooldown" hidden></p>
         <button type="button" class="action"></button>
         <button type="button" class="pause" hidden>Pause</button>
+        <button type="button" class="clear-cache" aria-describedby="cache-help">Clear Cache</button>
+        <p id="cache-help" class="details">Clears all translation cache, not glossary or provider settings.</p>
+        <p class="cache-feedback" role="status" aria-live="polite"></p>
       </section>
       <button type="button" class="expand" aria-expanded="false" aria-controls="panel" hidden></button>`;
     this.panel = shadow.querySelector('section')!;
@@ -55,6 +58,7 @@ export class ReaderStatusView {
     this.expand.addEventListener('click', () => this.setCollapsed(false));
     this.action.addEventListener('click', () => onAction(this.currentAction));
     this.pause.addEventListener('click', () => onAction('pause'));
+    shadow.querySelector('.clear-cache')!.addEventListener('click', () => onAction('clear-cache'));
     this.host.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && !this.panel.hidden) {
         event.stopPropagation();
@@ -70,7 +74,7 @@ export class ReaderStatusView {
     this.collapse.setAttribute('aria-expanded', String(!collapsed));
     this.host.style.setProperty(
       'width',
-      collapsed ? 'auto' : 'min(22rem, calc(100vw - 24px))',
+      collapsed ? 'auto' : 'min(22rem, calc(100% - 24px))',
       'important'
     );
     this.expand.textContent = `Koma: ${this.summary.textContent || 'Preparing translation'}`;
@@ -174,8 +178,16 @@ export class ReaderStatusView {
     this.timer = undefined;
   }
 
+  cacheFeedback(message: string, busy = false): void {
+    if (!this.host.isConnected) return;
+    this.host.shadowRoot!.querySelector('.cache-feedback')!.textContent = message;
+    this.host.shadowRoot!.querySelector<HTMLButtonElement>('.clear-cache')!.disabled = busy;
+  }
+
   remove(): void {
     this.clearTimer();
+    this.host.shadowRoot!.querySelector('.cache-feedback')!.textContent = '';
+    this.host.shadowRoot!.querySelector<HTMLButtonElement>('.clear-cache')!.disabled = false;
     this.host.remove();
     this.setCollapsed(false, false);
   }

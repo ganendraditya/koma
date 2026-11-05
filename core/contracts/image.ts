@@ -7,6 +7,9 @@ export interface MangaImage {
    */
   id: string;
 
+  /** Adapter-owned source identity; content equality is verified separately from image bytes. */
+  sourceIdentity?: string;
+
   /**
    * Source URL of the manga image, if loaded via URL.
    */

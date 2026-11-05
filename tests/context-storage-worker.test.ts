@@ -55,11 +55,13 @@ function createScopeIds(chapterId = CHAPTER_A): ContextScopeIds {
 
 function options(
   glossaryChanges: ContextWriteOptions['glossaryChanges'],
-  revision = 0
+  revision = 0,
+  replayRevision?: string
 ): ContextWriteOptions {
   return {
     dialogueChanges: [],
     glossaryChanges,
+    replayRevision,
     expectedGlossaryRevision: revision,
     expectedChapterGeneration: 0,
     expectedGlossaryGeneration: 0,
@@ -102,12 +104,13 @@ async function setup() {
 function saveRequest(
   scopeIds: ContextScopeIds,
   glossaryChanges: ContextWriteOptions['glossaryChanges'],
-  revision = 0
+  revision = 0,
+  replayRevision?: string
 ) {
   return {
     operation: 'saveContext',
     scopeIds,
-    options: options(glossaryChanges, revision),
+    options: options(glossaryChanges, revision, replayRevision),
   };
 }
 
@@ -115,6 +118,12 @@ function storedGlossary(data: Record<string, unknown>) {
   const record = data[`koma_context:v1:${createScopeIds().glossary}`] as
     StoredContextSnapshot | undefined;
   return record?.glossary ?? [];
+}
+
+function storedReplayRevision(data: Record<string, unknown>) {
+  const record = data[`koma_context:v1:${createScopeIds().glossary}`] as
+    StoredContextSnapshot | undefined;
+  return record?.replayRevision;
 }
 
 afterEach(() => {
@@ -181,6 +190,27 @@ describe('Context storage service worker coordinator', () => {
     );
 
     expect(storedGlossary(data)).toEqual([pinned]);
+  });
+
+  it('keeps the newest user replay revision when a stale tab writes a model term', async () => {
+    const { data, send } = await setup();
+    const pinned = { original: '覇気', translation: 'Haki', isHard: true };
+    const soft = { original: '生徒会', translation: 'student council', isHard: false };
+    await send(
+      saveRequest(createScopeIds(), [update(pinned.original, pinned)], 0, 'user-revision-1')
+    );
+    await send(
+      saveRequest(
+        createScopeIds(CHAPTER_B),
+        [update(soft.original, soft, 'model')],
+        0,
+        'stale-initial-revision'
+      ),
+      CHAPTER_B
+    );
+
+    expect(storedGlossary(data)).toEqual([pinned, soft]);
+    expect(storedReplayRevision(data)).toBe('user-revision-1');
   });
 
   it('fences writes from a tab that loaded its scope before a reset', async () => {

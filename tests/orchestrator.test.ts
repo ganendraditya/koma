@@ -103,6 +103,58 @@ describe('TranslationOrchestrator', () => {
     expect(mockProvider.translatePage).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['shown', 'hidden', 'failed render'] as const)(
+    'publishes acceptance only after a usable result (%s)',
+    async (state) => {
+      vi.mocked(mockAdapter.detectMangaImages).mockReturnValue([{ id: 'img-1', pageIndex: 0 }]);
+      const result: TranslationResult = {
+        pageId: 'page_0',
+        imageId: 'img-1',
+        sourceLanguage: 'ja',
+        targetLanguage: 'id',
+        bubbles: [],
+      };
+      vi.mocked(mockProvider.translatePage).mockResolvedValue(result);
+      mockProvider.acceptTranslation = vi.fn(async () => {
+        expect(mockRenderer.render).toHaveBeenCalledTimes(state === 'hidden' ? 0 : 1);
+      });
+      if (state === 'failed render')
+        vi.mocked(mockRenderer.render).mockImplementation(() => {
+          throw new Error('missing target');
+        });
+      const orchestrator = new TranslationOrchestrator(mockProvider, mockAdapter, mockRenderer);
+      if (state === 'hidden') orchestrator.setOverlaysVisible(false);
+      await orchestrator.translateNext();
+      await vi.waitFor(() =>
+        expect(orchestrator.getState().get('img-1')?.status).toBe(
+          state === 'failed render' ? 'failed' : 'completed'
+        )
+      );
+      expect(mockProvider.acceptTranslation).toHaveBeenCalledTimes(
+        state === 'failed render' ? 0 : 1
+      );
+    }
+  );
+
+  it('explicit retranslation bypasses replay while preserving the displayed result until replacement', async () => {
+    vi.mocked(mockAdapter.detectMangaImages).mockReturnValue([{ id: 'img-1', pageIndex: 0 }]);
+    vi.mocked(mockProvider.translatePage).mockResolvedValue({
+      pageId: 'page_0',
+      imageId: 'img-1',
+      sourceLanguage: 'ja',
+      targetLanguage: 'id',
+      bubbles: [],
+    });
+    const orchestrator = new TranslationOrchestrator(mockProvider, mockAdapter, mockRenderer);
+    await orchestrator.translateNext();
+    await vi.waitFor(() => expect(orchestrator.getState().get('img-1')?.status).toBe('completed'));
+    await orchestrator.retranslate('img-1');
+    await vi.waitFor(() => expect(mockRenderer.render).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(mockProvider.translatePage).mock.calls[1][0].options).toEqual({
+      bypassCache: true,
+    });
+  });
+
   it.each(['retry', 'translateNext'] as const)(
     'allows retrying failed translations using %s',
     async (action) => {

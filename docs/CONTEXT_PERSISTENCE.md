@@ -12,7 +12,7 @@ Recent dialogue belongs to a chapter and target language. A glossary belongs to 
 
 ## Ordering and bounds
 
-Each accepted translation replaces the contribution for its image ID. This makes cache replay and retry idempotent. Context packets for page `n` include only retained dialogue whose page index is less than `n`; results that arrive out of order cannot add later-page dialogue to an earlier request.
+Each accepted translation replaces the contribution for its image ID. The durable reader replay path uses chapter/page identity for this contribution, so rebinding an overlay to a new session image ID cannot duplicate dialogue. This makes cache replay and retry idempotent. Context packets for page `n` include only retained dialogue whose page index is less than `n`; results that arrive out of order cannot add later-page dialogue to an earlier request.
 
 The dialogue window holds at most 15 entries, ordered by chapter page index and then within-page bubble order. The glossary holds at most 50 terms. Hard glossary entries take precedence over model updates. When all glossary slots contain hard entries, adding another new term is rejected; `addGlossaryEntry` returns `false` so a UI can report that limit.
 
@@ -25,3 +25,5 @@ Records remain until the user resets that reading scope, LRU eviction removes th
 Context storage commands from reader tabs are handled by the service worker, which serializes loads, updates, and resets. Saves carry only changed dialogue contributions and glossary terms. A stale model update cannot replace a pinned term or restore a term removed elsewhere; a stale user edit to the same term is rejected so the editor can retain the draft and reload. Small generation markers fence off writes from tabs that loaded a scope before it was reset or evicted.
 
 Only normalized dialogue entries and glossary terms are stored. Provider credentials, raw provider responses, and image buffers are not included. Reset Context removes the active chapter's dialogue and the active glossary scope for the selected target language. It does not remove provider settings, translation cache entries, or unrelated series context.
+
+KOMA-016 adds an optional persisted user glossary revision to context snapshots. Model soft updates leave this revision unchanged. Reset Context invalidates accepted cache replay eligibility for the related glossary scope before removing context records, without starting inference. See [Translation Cache](TRANSLATION_CACHE.md) for the replay and Clear Cache policy.

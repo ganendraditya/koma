@@ -147,7 +147,11 @@
         border-radius: 6px;
         border: none;
         cursor: pointer;
-        transition: all 0.15s ease;
+        transition:
+          background-color 0.15s ease,
+          border-color 0.15s ease,
+          color 0.15s ease,
+          opacity 0.15s ease;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -406,6 +410,17 @@
         Checking reader session...
       </p>
       <button id="btn-diagnostic" class="btn btn-secondary">Run Diagnostics</button>
+      <button id="btn-retranslate" class="btn btn-secondary" disabled>
+        Retranslate Visible Page
+      </button>
+      <button id="btn-clear-cache" class="btn btn-secondary" aria-describedby="clear-cache-help">
+        Clear Cache
+      </button>
+      <p id="clear-cache-help" class="form-help">
+        Clears all translation cache. Glossary, context, settings, and visible overlays are kept.
+        Active work will pause.
+      </p>
+      <p id="cache-feedback" class="form-help" role="status" aria-live="polite"></p>
     </div>
 
     <div id="diagnostic-box" class="diagnostic-box">

@@ -75,6 +75,7 @@ export interface ITranslationOrchestrator {
    * Retries translation for a specific image ID if it previously failed.
    */
   retry(imageId: string, handler?: OrchestratorEventHandler): Promise<boolean>;
+  retranslate?(imageId: string, handler?: OrchestratorEventHandler): Promise<boolean>;
 
   /**
    * Prefetches upcoming manga images according to look-ahead priority.

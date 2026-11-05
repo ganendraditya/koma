@@ -14,6 +14,7 @@ export interface DialogueContributionSnapshot {
 
 export interface ContextSnapshot {
   schemaVersion: 1;
+  replayRevision?: string;
   dialogueContributions: DialogueContributionSnapshot[];
   glossary: GlossaryEntry[];
 }
@@ -54,6 +55,7 @@ export interface IContextManager {
   preserveHonorifics?: boolean;
 
   getPacket(beforePageIndex?: number): ContextPacket;
+  getReplayRevision?(): string;
   recordTranslation(result: unknown, pageIndex?: number, imageId?: string): void;
   commitTranslation?(
     result: unknown,

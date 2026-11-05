@@ -19,6 +19,7 @@ import {
 } from './viewport';
 
 export class TranslationOrchestrator implements ITranslationOrchestrator {
+  private readonly forcedRequests = new Set<string>();
   private readonly provider: TranslationProvider;
   private readonly queue = new PrefetchQueue();
   private readonly stateMap = new Map<string, ImageTranslationState>();
@@ -113,6 +114,7 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
 
   reset(): void {
     this.cancelPending();
+    this.forcedRequests.clear();
     this.stateMap.clear();
     this.renderer.removeAllOverlays?.();
     this.overlaysVisible = true;
@@ -299,6 +301,23 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
     return true;
   }
 
+  async retranslate(imageId: string, handler?: OrchestratorEventHandler): Promise<boolean> {
+    if (
+      !this.isTranslationEnabled() ||
+      !this.pageVisible ||
+      !this.detect().some((image) => image.id === imageId)
+    )
+      return false;
+    this.cancelPending();
+    if (handler) this.handler = handler;
+    this.forcedRequests.add(imageId);
+    this.updateState(imageId, { status: 'idle', error: undefined });
+    this.queue.enqueue({ imageId, priority: 0, source: 'user' });
+    this.pumpQueue();
+    this.notify();
+    return true;
+  }
+
   private pumpQueue(): void {
     if (!this.isTranslationEnabled() || !this.pageVisible || !this.queue.size) return;
     const remaining = this.cooldownUntil - Date.now();
@@ -356,7 +375,11 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       let result: TranslationResult;
       try {
         result = await this.provider.translatePage(
-          { image, targetLanguage: this.options.targetLanguage ?? 'id' },
+          {
+            image,
+            targetLanguage: this.options.targetLanguage ?? 'id',
+            ...(this.forcedRequests.has(imageId) ? { options: { bypassCache: true } } : {}),
+          },
           signal
         );
       } catch (error) {
@@ -368,7 +391,10 @@ export class TranslationOrchestrator implements ITranslationOrchestrator {
       }
       if (signal.aborted) return;
       if (this.overlaysVisible) this.render(result);
+      if (this.provider.acceptTranslation) await this.provider.acceptTranslation(result, signal);
+      if (signal.aborted) return;
       this.updateState(imageId, { status: 'completed', result });
+      this.forcedRequests.delete(imageId);
       logPipeline('total', 'translation', performance.now() - start);
       try {
         this.handler?.onComplete?.(imageId, result);

@@ -62,6 +62,40 @@ export class ExtensionTranslationProvider implements TranslationProvider {
     for (const cancel of this.pending) cancel();
   }
 
+  async prepareImage(
+    request: TranslationRequest,
+    signal?: AbortSignal
+  ): Promise<TranslationRequest> {
+    signal?.throwIfAborted();
+    if (this.cancelled) throw new DOMException('Provider was disposed.', 'AbortError');
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    signal?.addEventListener('abort', cancel, { once: true });
+    this.pending.add(cancel);
+    const timer = setTimeout(cancel, request.options?.timeoutMs ?? 120000);
+    try {
+      const image = await loadImageData(request.image, this.id, undefined, controller.signal);
+      controller.signal.throwIfAborted();
+      return {
+        ...request,
+        image: { ...request.image, base64Data: image.base64Data, mimeType: image.mimeType },
+      };
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (controller.signal.aborted)
+        throw new ProviderTimeoutError(
+          'Image loading timed out or was cancelled.',
+          this.id,
+          request.options?.timeoutMs ?? 120000
+        );
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      this.pending.delete(cancel);
+      signal?.removeEventListener('abort', cancel);
+    }
+  }
+
   async translatePage(
     request: TranslationRequest,
     signal?: AbortSignal
@@ -74,29 +108,9 @@ export class ExtensionTranslationProvider implements TranslationProvider {
         this.id
       );
     const timeoutMs = request.options?.timeoutMs ?? 120000;
-    const controller = new AbortController();
-    const cancelLoad = () => controller.abort();
-    signal?.addEventListener('abort', cancelLoad, { once: true });
-    this.pending.add(cancelLoad);
-    const loadTimeout = setTimeout(cancelLoad, timeoutMs);
     const start = performance.now();
-    let image: Awaited<ReturnType<typeof loadImageData>>;
-    try {
-      image = await loadImageData(request.image, this.id, undefined, controller.signal);
-    } catch (error) {
-      signal?.throwIfAborted();
-      if (controller.signal.aborted)
-        throw new ProviderTimeoutError(
-          'Image loading timed out or was cancelled.',
-          this.id,
-          timeoutMs
-        );
-      throw error;
-    } finally {
-      clearTimeout(loadTimeout);
-      this.pending.delete(cancelLoad);
-      signal?.removeEventListener('abort', cancelLoad);
-    }
+    const prepared = await this.prepareImage(request, signal);
+    const image = { base64Data: prepared.image.base64Data!, mimeType: prepared.image.mimeType! };
     signal?.throwIfAborted();
     if (this.cancelled)
       throw new ProviderError(
