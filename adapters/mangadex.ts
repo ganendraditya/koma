@@ -191,4 +191,47 @@ export class MangaDexAdapter implements SiteAdapter {
       view.removeEventListener('popstate', schedule);
     };
   }
+
+  observeReadingIdentity(onChange: (identity: ReadingIdentity | null) => void): () => void {
+    const view = this.root.defaultView;
+    if (!view || !readerUrl(this.getUrl())) {
+      onChange(this.getReadingIdentity());
+      return () => {};
+    }
+
+    let stopped = false;
+    let queued = false;
+    let previous: string | undefined;
+    const publish = () => {
+      queued = false;
+      if (stopped) return;
+      const identity = this.getReadingIdentity();
+      const signature = JSON.stringify(identity);
+      if (signature !== previous) {
+        previous = signature;
+        onChange(identity);
+      }
+    };
+    const schedule = () => {
+      if (queued || stopped) return;
+      queued = true;
+      queueMicrotask(publish);
+    };
+
+    const observer = new view.MutationObserver(schedule);
+    observer.observe(this.root, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['href'],
+    });
+    view.addEventListener('popstate', schedule);
+    publish();
+
+    return () => {
+      stopped = true;
+      observer.disconnect();
+      view.removeEventListener('popstate', schedule);
+    };
+  }
 }

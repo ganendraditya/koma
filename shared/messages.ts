@@ -1,6 +1,6 @@
 import type { ProviderCapabilities, TranslationRequest, TranslationResult } from '@core/contracts';
 import type { ReadingSessionState } from '@core/orchestrator/types';
-import type { ReadingIdentity } from '@core/contracts';
+import type { DialogueEntry, GlossaryEntry, ReadingIdentity } from '@core/contracts';
 import type { ReplayIdentity, ReplayRecord } from '@core/cache/replay';
 
 /**
@@ -17,6 +17,7 @@ export const EXTENSION_MESSAGE_TYPES = {
   PAUSE_TRANSLATION: 'PAUSE_TRANSLATION',
   SET_OVERLAY_VISIBILITY: 'SET_OVERLAY_VISIBILITY',
   RESET_CONTEXT: 'RESET_CONTEXT',
+  CONTEXT_COMMAND: 'CONTEXT_COMMAND',
   RENDER_TRANSLATION_OVERLAY: 'RENDER_TRANSLATION_OVERLAY',
   CLEAR_ALL_OVERLAYS: 'CLEAR_ALL_OVERLAYS',
   GET_PROVIDER_CONFIG: 'GET_PROVIDER_CONFIG',
@@ -65,6 +66,77 @@ export interface ResetContextResponse {
   success: boolean;
   timestamp: number;
   error?: string;
+}
+
+export interface ContextScopeView {
+  site: string;
+  chapterId: string;
+  seriesId?: string;
+  targetLanguage: string;
+}
+
+/** Read-only snapshot of the reading context that feeds the next provider request. */
+export interface ContextView {
+  supported: boolean;
+  scope?: ContextScopeView;
+  seriesTitle?: string;
+  dialogue: DialogueEntry[];
+  dialogueCount: number;
+  dialogueLimit: number;
+  glossary: GlossaryEntry[];
+  glossaryLimit: number;
+}
+
+export type ContextCommandOutcome =
+  'added' | 'updated' | 'unchanged' | 'pinned' | 'unpinned' | 'removed';
+
+export type ContextCommandOperation =
+  | { operation: 'view' }
+  | { operation: 'save'; original: string; translation: string; pinned: boolean }
+  | { operation: 'setPinned'; original: string; pinned: boolean }
+  | { operation: 'remove'; original: string };
+
+export type ContextCommandRequest = {
+  type: typeof EXTENSION_MESSAGE_TYPES.CONTEXT_COMMAND;
+  targetLanguage?: string;
+} & ContextCommandOperation;
+
+export interface ContextCommandResponse {
+  success: boolean;
+  code?: string;
+  error?: string;
+  outcome?: ContextCommandOutcome;
+  view?: ContextView;
+}
+
+export const CONTEXT_TERM_MAX_LENGTH = 500;
+
+/** Runtime guard for the discriminated context request: unknown shapes, including unknown
+ * operations, are rejected instead of falling into an unintended branch. */
+export function isContextCommandRequest(value: unknown): value is ContextCommandRequest {
+  if (!value || typeof value !== 'object') return false;
+  const request = value as Record<string, unknown>;
+  if (request.type !== EXTENSION_MESSAGE_TYPES.CONTEXT_COMMAND) return false;
+  if (request.targetLanguage !== undefined && typeof request.targetLanguage !== 'string')
+    return false;
+  const bounded = (field: unknown): field is string =>
+    typeof field === 'string' && field.length > 0 && field.length <= CONTEXT_TERM_MAX_LENGTH;
+  switch (request.operation) {
+    case 'view':
+      return true;
+    case 'save':
+      return (
+        bounded(request.original) &&
+        bounded(request.translation) &&
+        typeof request.pinned === 'boolean'
+      );
+    case 'setPinned':
+      return bounded(request.original) && typeof request.pinned === 'boolean';
+    case 'remove':
+      return bounded(request.original);
+    default:
+      return false;
+  }
 }
 
 export interface DiagnosticReport {
@@ -178,6 +250,7 @@ export type ExtensionRequest =
   | CheckPageStatusRequest
   | RunDiagnosticRequest
   | ResetContextRequest
+  | ContextCommandRequest
   | TranslateActivePageRequest
   | PauseTranslationRequest
   | SetOverlayVisibilityRequest

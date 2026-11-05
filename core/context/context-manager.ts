@@ -252,6 +252,10 @@ export class ContextManager implements IContextManager {
     return this.maxDialogueEntries;
   }
 
+  getMaxGlossaryEntries(): number {
+    return this.maxGlossaryEntries;
+  }
+
   exportSnapshot(): ContextSnapshot {
     const dialogueContributions: DialogueContributionSnapshot[] = [
       ...this.dialogueContributions.values(),

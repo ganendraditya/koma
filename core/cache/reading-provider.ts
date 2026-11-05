@@ -29,6 +29,9 @@ interface PendingAcceptance {
   scopeSignature: string;
 }
 
+export const CONTEXT_CHANGED_WARNING =
+  'Glossary changed during this translation. This page was not saved. Retranslate the page to apply it.';
+
 export class ReadingTranslationProvider implements TranslationProvider {
   private readonly pending = new WeakMap<TranslationResult, PendingAcceptance>();
 
@@ -157,7 +160,10 @@ export class ReadingTranslationProvider implements TranslationProvider {
       pending.scopeSignature !== JSON.stringify(this.options.getScope()) ||
       pending.contextRevision !== (this.options.context.getReplayRevision?.() ?? 'initial')
     ) {
-      throw new DOMException('Reading context changed.', 'AbortError');
+      // The reader already shows this translation, so a changed glossary must not turn a usable
+      // page into a failure. Nothing is recorded: this result does not match the current context.
+      this.options.warn?.(CONTEXT_CHANGED_WARNING);
+      return;
     }
     if (this.options.context.commitTranslation) {
       await this.options.context.commitTranslation(

@@ -28,7 +28,8 @@ async function setup() {
   const navigation = new EventTarget();
   vi.stubGlobal('navigation', navigation);
   window.history.replaceState({}, '', `/chapter/${chapter}`);
-  document.body.innerHTML = '<div class="md--reader-pages"></div>';
+  document.body.innerHTML =
+    '<div class="md--reader-wrap"><div class="md--reader-pages"></div></div>';
   let visible = 0;
   const addImage = (pageIndex: number) => {
     const image = document.createElement('img');
@@ -248,6 +249,42 @@ describe('Popup to reader to worker session commands', () => {
     }
   );
 
+  it('sends a popup-pinned glossary term as mandatory context for the next request', async () => {
+    const { popup, click, ready, fetchFn } = await setup();
+    popup.getElementById('btn-toggle-context')!.click();
+    await vi.waitFor(() => expect(popup.getElementById('context-scope')?.hidden).toBe(false));
+    expect(popup.getElementById('context-status')?.textContent).toContain('No dialogue kept yet');
+
+    const original = popup.getElementById('context-original') as HTMLInputElement;
+    const translation = popup.getElementById('context-translation') as HTMLInputElement;
+    const pin = popup.getElementById('context-pin') as HTMLInputElement;
+    const save = popup.getElementById('btn-save-term') as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    original.value = '覇気';
+    original.dispatchEvent(new Event('input'));
+    translation.value = 'Haki';
+    translation.dispatchEvent(new Event('input'));
+    expect(save.disabled).toBe(false);
+    pin.checked = true;
+    click('Save Term');
+
+    await vi.waitFor(() =>
+      expect(popup.getElementById('context-glossary-list')?.textContent).toContain('Haki')
+    );
+    expect(popup.getElementById('context-feedback')?.textContent).toContain(
+      'Retranslate Visible Page'
+    );
+    const termRow = popup.getElementById('context-glossary-list')!.querySelector('.context-badge');
+    expect(termRow?.textContent).toBe('Pinned');
+
+    click('Translate');
+    await ready(3);
+    const body = String(fetchFn.mock.calls[0][1]!.body);
+    expect(body).toContain('覇気');
+    expect(body).toContain('[MANDATORY]');
+    await vi.waitFor(() => expect(popup.getElementById('context-status')?.hidden).toBe(true));
+  });
+
   it('keeps reader feedback current without popup interaction and routes reader Pause/Resume through transport', async () => {
     const { click, ready, fetchFn, response, content, runtime, getRuntimeProviderConfig } =
       await setup();
@@ -313,6 +350,53 @@ describe('Popup to reader to worker session commands', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
     content.handleContentScriptMessage({ type: EXTENSION_MESSAGE_TYPES.RESET_CONTEXT });
     expect(readerText()).toBe('Translation paused');
+  });
+
+  it('promotes active context when MangaDex exposes the title link after the chapter starts', async () => {
+    const { click, content, local } = await setup();
+    document.querySelector('.md--reader-pages')!.replaceChildren();
+    click('Translate');
+    await vi.waitFor(() => expect(readerText()).toBe('Waiting for manga images'));
+    await content.sessionContextManager.ready?.();
+
+    content.sessionContextManager.addGlossaryEntry({
+      original: 'late-term',
+      translation: 'Late term',
+      isHard: true,
+    });
+    await content.sessionContextManager.flush?.();
+
+    document
+      .querySelector('.md--reader-wrap')!
+      .insertAdjacentHTML(
+        'afterbegin',
+        '<a href="/title/11111111-1111-4111-8111-111111111111/example-series">Example series</a>'
+      );
+
+    const storedScopes = () =>
+      Object.keys(local)
+        .filter((key) => key.startsWith('koma_context:v1:'))
+        .map((key) => JSON.parse(decodeURIComponent(key.slice('koma_context:v1:'.length))));
+    await vi.waitFor(() =>
+      expect(
+        storedScopes().some(
+          (scope) => scope[0] === 'series' && scope[2] === '11111111-1111-4111-8111-111111111111'
+        )
+      ).toBe(true)
+    );
+    await content.sessionContextManager.flush?.();
+
+    expect(content.sessionContextManager.getGlossary()).toContainEqual({
+      original: 'late-term',
+      translation: 'Late term',
+      isHard: true,
+    });
+    expect(storedScopes().some((scope) => scope[0] === 'chapter' && scope[2] === null)).toBe(true);
+    expect(
+      storedScopes().some(
+        (scope) => scope[0] === 'chapter' && scope[2] === '11111111-1111-4111-8111-111111111111'
+      )
+    ).toBe(true);
   });
 
   it('shows a real cooldown, blocks early retry and recovers only on explicit reader retry', async () => {

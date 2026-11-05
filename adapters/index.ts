@@ -22,6 +22,9 @@ export interface SiteAdapter {
   /** Returns stable series/chapter identity when the reader exposes it. */
   getReadingIdentity?(url?: string): ReadingIdentity | null;
 
+  /** Emits an initial identity and each later identity change. */
+  observeReadingIdentity?(onChange: (identity: ReadingIdentity | null) => void): () => void;
+
   /**
    * Resolves the DOM element corresponding to a detected manga image.
    */
